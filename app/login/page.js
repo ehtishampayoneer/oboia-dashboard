@@ -21,9 +21,9 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (!loading && currentUser) {
-      router.replace('/dashboard');
+      window.location.href = '/dashboard';
     }
-  }, [currentUser, loading, router]);
+  }, [currentUser, loading]);
 
   const onSubmit = async (data) => {
     setErrorMsg('');
@@ -31,7 +31,9 @@ export default function LoginPage() {
     try {
       await loginWithToken(data.token, data.email, data.password);
       toast.success('Welcome back!');
-      router.replace('/dashboard');
+      setTimeout(() => {
+        window.location.href = '/dashboard';
+      }, 300);
     } catch (err) {
       const map = {
         INVALID_TOKEN: 'Invalid shop token. Please check and try again.',
@@ -41,7 +43,6 @@ export default function LoginPage() {
         USER_NOT_FOUND: 'Incorrect email or password.',
       };
       setErrorMsg(map[err.message] || 'Something went wrong. Please try again.');
-    } finally {
       setSubmitting(false);
     }
   };
