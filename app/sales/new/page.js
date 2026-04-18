@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Plus, Trash2, Search, X, Check } from 'lucide-react';
 import Layout from '../../../components/Layout';
@@ -16,7 +16,7 @@ import { collection, getDocs, query, where, doc, getDoc } from 'firebase/firesto
 import { db } from '../../../lib/firebase';
 import toast from 'react-hot-toast';
 
-export default function NewSalePage() {
+function NewSaleContent() {
   const { shopId, currentUser, userDoc } = useAuth();
   const { t } = useLanguage();
   const { format } = useCurrency();
@@ -57,7 +57,6 @@ export default function NewSalePage() {
         (shopData?.paymentTypes || [{ id: 'cash' }]).filter((p) => p.isActive).map((p) => [p.id, ''])
       ));
 
-      // Pre-fill from order if orderId
       if (orderId) {
         const orderSnap = await getDoc(doc(db, 'orders', orderId));
         if (orderSnap.exists()) {
@@ -180,7 +179,6 @@ export default function NewSalePage() {
   return (
     <Layout title={t('sales_new')}>
       <div className="max-w-4xl mx-auto space-y-5">
-        {/* Section 1: Items */}
         <div className="bg-card border border-white/5 rounded-xl p-5">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-text-main font-semibold">1. {t('sales_items')}</h2>
@@ -266,7 +264,6 @@ export default function NewSalePage() {
           )}
         </div>
 
-        {/* Section 2: Craftsman */}
         <div className="bg-card border border-white/5 rounded-xl p-5">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-text-main font-semibold">2. {t('sales_craftsman')}</h2>
@@ -304,7 +301,6 @@ export default function NewSalePage() {
           )}
         </div>
 
-        {/* Section 3: Payments */}
         <div className="bg-card border border-white/5 rounded-xl p-5">
           <h2 className="text-text-main font-semibold mb-4">3. {t('sales_payments')}</h2>
 
@@ -366,7 +362,6 @@ export default function NewSalePage() {
         </div>
       </div>
 
-      {/* Wallpaper search modal */}
       {searchOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
           <div className="w-full max-w-lg bg-card border border-white/10 rounded-2xl shadow-card animate-slide-up max-h-[80vh] flex flex-col">
@@ -422,5 +417,17 @@ export default function NewSalePage() {
         confirmText={t('sales_close_receipt')}
       />
     </Layout>
+  );
+}
+
+export default function NewSalePage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-dark flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+      </div>
+    }>
+      <NewSaleContent />
+    </Suspense>
   );
 }
