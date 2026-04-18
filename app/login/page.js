@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useForm } from 'react-hook-form';
-import { Eye, EyeOff, KeyRound, Mail, Lock, AlertCircle } from 'lucide-react';
+import { Eye, EyeOff, AlertCircle } from 'lucide-react';
 import { loginWithToken } from '../../lib/auth';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
@@ -34,13 +34,13 @@ export default function LoginPage() {
       router.replace('/dashboard');
     } catch (err) {
       const map = {
-        INVALID_TOKEN: t('login_error_invalid_token'),
-        SHOP_INACTIVE: t('login_error_shop_inactive'),
-        WRONG_CREDENTIALS: t('login_error_wrong_credentials'),
-        USER_BLOCKED: t('login_error_blocked'),
-        USER_NOT_FOUND: t('login_error_wrong_credentials'),
+        INVALID_TOKEN: 'Invalid shop token. Please check and try again.',
+        SHOP_INACTIVE: 'This shop is currently inactive.',
+        WRONG_CREDENTIALS: 'Incorrect email or password.',
+        USER_BLOCKED: 'Your account has been blocked. Contact admin.',
+        USER_NOT_FOUND: 'Incorrect email or password.',
       };
-      setErrorMsg(map[err.message] || t('login_error_generic'));
+      setErrorMsg(map[err.message] || 'Something went wrong. Please try again.');
     } finally {
       setSubmitting(false);
     }
@@ -56,13 +56,13 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen bg-dark flex flex-col items-center justify-center p-4 relative">
-      {/* Background texture */}
+      {/* Background glow */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute -top-40 -right-40 w-96 h-96 rounded-full bg-primary/5 blur-3xl" />
-        <div className="absolute -bottom-40 -left-40 w-96 h-96 rounded-full bg-secondary/5 blur-3xl" />
+        <div className="absolute -bottom-40 -left-40 w-96 h-96 rounded-full bg-primary/5 blur-3xl" />
       </div>
 
-      {/* Language toggle top right */}
+      {/* Language toggle */}
       <div className="absolute top-4 right-4">
         <button
           onClick={toggleLanguage}
@@ -70,80 +70,103 @@ export default function LoginPage() {
             text-sm font-semibold text-text-main hover:border-primary/50
             hover:text-primary transition-all"
         >
-          {currentLang === 'en' ? 'O\'zbek' : 'English'}
+          {currentLang === 'en' ? "O'zbek" : 'English'}
         </button>
       </div>
 
       {/* Card */}
       <div className="w-full max-w-md relative z-10">
+
         {/* Logo */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary/20 mb-4">
-            <span className="text-primary font-black text-3xl">W</span>
+          <div className="inline-flex items-center justify-center w-20 h-20 rounded-3xl bg-primary/20 mb-4 border border-primary/30">
+            <img
+              src="/logo.png"
+              alt="OBOIA"
+              className="w-12 h-12 object-contain"
+              onError={(e) => {
+                e.target.style.display = 'none';
+                e.target.nextSibling.style.display = 'flex';
+              }}
+            />
+            <span
+              className="text-primary font-black text-3xl hidden items-center justify-center"
+              style={{ display: 'none' }}
+            >
+              O
+            </span>
           </div>
-          <h1 className="text-3xl font-black text-primary tracking-tight">OBOIA</h1>
-          <p className="text-subtext text-sm mt-1">{t('login_subtitle')}</p>
+          <h1 className="text-4xl font-black text-primary tracking-tight">OBOIA</h1>
+          <p className="text-subtext text-sm mt-1 font-medium">
+            Wallpaper Business Management
+          </p>
         </div>
 
+        {/* Form card */}
         <div className="bg-card border border-white/10 rounded-2xl p-8 shadow-card">
-          <h2 className="text-text-main font-bold text-xl mb-6">{t('login_title')}</h2>
+          <div className="mb-6">
+            <h2 className="text-text-main font-bold text-xl">Sign In</h2>
+            <p className="text-subtext text-sm mt-1">
+              Enter your shop credentials to continue
+            </p>
+          </div>
 
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+
             {/* Shop Token */}
             <div>
               <label className="block text-sm font-medium text-text-main mb-1.5">
-                {t('login_shop_token')}
+                Shop Token
               </label>
-              <div className="relative">
-                <KeyRound size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-subtext" />
-                <input
-                  type="text"
-                  placeholder={t('login_shop_token_placeholder')}
-                  {...register('token', { required: t('common_required') })}
-                  className="pl-9 uppercase tracking-widest font-mono text-primary"
-                  autoComplete="off"
-                  spellCheck="false"
-                />
-              </div>
+              <input
+                type="text"
+                placeholder="e.g. SHOP-MAIN001"
+                {...register('token', { required: 'Shop token is required' })}
+                className="w-full uppercase tracking-widest font-mono text-primary pl-4"
+                autoComplete="off"
+                spellCheck="false"
+              />
               {errors.token && (
-                <p className="text-error text-xs mt-1">{errors.token.message}</p>
+                <p className="text-error text-xs mt-1 flex items-center gap-1">
+                  <AlertCircle size={12} />
+                  {errors.token.message}
+                </p>
               )}
             </div>
 
             {/* Email */}
             <div>
               <label className="block text-sm font-medium text-text-main mb-1.5">
-                {t('login_email')}
+                Email Address
               </label>
-              <div className="relative">
-                <Mail size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-subtext" />
-                <input
-                  type="email"
-                  placeholder={t('login_email_placeholder')}
-                  {...register('email', {
-                    required: t('common_required'),
-                    pattern: { value: /^\S+@\S+\.\S+$/, message: 'Invalid email' },
-                  })}
-                  className="pl-9"
-                />
-              </div>
+              <input
+                type="email"
+                placeholder="your@email.com"
+                {...register('email', {
+                  required: 'Email is required',
+                  pattern: { value: /^\S+@\S+\.\S+$/, message: 'Invalid email address' },
+                })}
+                className="w-full pl-4"
+              />
               {errors.email && (
-                <p className="text-error text-xs mt-1">{errors.email.message}</p>
+                <p className="text-error text-xs mt-1 flex items-center gap-1">
+                  <AlertCircle size={12} />
+                  {errors.email.message}
+                </p>
               )}
             </div>
 
             {/* Password */}
             <div>
               <label className="block text-sm font-medium text-text-main mb-1.5">
-                {t('login_password')}
+                Password
               </label>
               <div className="relative">
-                <Lock size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-subtext" />
                 <input
                   type={showPassword ? 'text' : 'password'}
-                  placeholder={t('login_password_placeholder')}
-                  {...register('password', { required: t('common_required') })}
-                  className="pl-9 pr-9"
+                  placeholder="Enter your password"
+                  {...register('password', { required: 'Password is required' })}
+                  className="w-full pl-4 pr-10"
                 />
                 <button
                   type="button"
@@ -154,7 +177,10 @@ export default function LoginPage() {
                 </button>
               </div>
               {errors.password && (
-                <p className="text-error text-xs mt-1">{errors.password.message}</p>
+                <p className="text-error text-xs mt-1 flex items-center gap-1">
+                  <AlertCircle size={12} />
+                  {errors.password.message}
+                </p>
               )}
             </div>
 
@@ -166,7 +192,7 @@ export default function LoginPage() {
               </div>
             )}
 
-            {/* Submit */}
+            {/* Submit button */}
             <button
               type="submit"
               disabled={submitting}
@@ -178,15 +204,16 @@ export default function LoginPage() {
               {submitting ? (
                 <>
                   <div className="w-4 h-4 border-2 border-dark border-t-transparent rounded-full animate-spin" />
-                  {t('login_loading')}
+                  Signing in...
                 </>
               ) : (
-                t('login_button')
+                'Sign In to OBOIA'
               )}
             </button>
           </form>
         </div>
 
+        {/* Footer */}
         <p className="text-center text-subtext text-xs mt-6">
           OBOIA © {new Date().getFullYear()} — Wallpaper Management Platform
         </p>
