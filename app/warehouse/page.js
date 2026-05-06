@@ -13,7 +13,7 @@ import StatusBadge from '../../components/StatusBadge';
 import toast from 'react-hot-toast';
 
 export default function WarehousePage() {
-  const { shopId, currentUser } = useAuth();
+  const { shopId, currentUser, isAdmin } = useAuth();
   const { t } = useLanguage();
   const { format } = useCurrency();
 
@@ -28,12 +28,12 @@ export default function WarehousePage() {
   const [stockForm, setStockForm] = useState({ rolls: '', supplierId: '', purchasePrice: '', notes: '' });
 
   const fetchData = async () => {
-    if (!shopId) return;
     setLoading(true);
     try {
+      const effectiveShopId = isAdmin ? null : shopId;
       const [data, sups] = await Promise.all([
-        getWarehouseData(shopId),
-        getAllSuppliers(shopId),
+        getWarehouseData(effectiveShopId),
+        getAllSuppliers(effectiveShopId),
       ]);
       setItems(data);
       setSuppliers(sups);
@@ -42,7 +42,7 @@ export default function WarehousePage() {
     }
   };
 
-  useEffect(() => { fetchData(); }, [shopId]);
+  useEffect(() => { fetchData(); }, [shopId, isAdmin]);
 
   const displayItems = lowOnly
     ? items.filter((w) => w.stock <= (w.lowStockThreshold || 0))
@@ -75,7 +75,8 @@ export default function WarehousePage() {
   const openHistory = async (item) => {
     setHistoryModal(item);
     setMovements([]);
-    const data = await getStockMovements(shopId, item.id);
+    const effectiveShopId = isAdmin ? null : shopId;
+    const data = await getStockMovements(effectiveShopId, item.id);
     setMovements(data);
   };
 
@@ -233,7 +234,7 @@ export default function WarehousePage() {
                     {[t('warehouse_movement_date'), t('warehouse_movement_type'), t('warehouse_movement_rolls'), t('warehouse_movement_reason'), t('warehouse_movement_by')].map((h) => (
                       <th key={h} className="px-4 py-2.5 text-left text-xs text-subtext font-semibold">{h}</th>
                     ))}
-                  </tr>
+                  <tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
                   {movements.length === 0 ? (
