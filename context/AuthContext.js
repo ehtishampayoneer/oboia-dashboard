@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useState, useEffect } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 
 const AuthContext = createContext(null);
@@ -20,26 +20,41 @@ export function AuthProvider({ children }) {
       if (user) {
         setCurrentUser(user);
         try {
+          // First try to find user document by UID (for existing admin users)
           const userRef = doc(db, 'users', user.uid);
-          const snap = await getDoc(userRef);
-          if (snap.exists()) {
-            const data = snap.data();
-            setUserDoc({ id: snap.id, ...data });
-            setUserRole(data.role || 'seller');
-            setShopId(data.shopId || null);
-            setBranchId(data.branchId || null);
+          let snap = await getDoc(userRef);
+          let userData = null;
 
-            // Set session cookies for middleware
-            if (typeof document !== 'undefined') {
-              document.cookie = `wallar_session=1; path=/; max-age=86400`;
-              document.cookie = `wallar_role=${data.role || 'seller'}; path=/; max-age=86400`;
-            }
+          if (snap.exists()) {
+            userData = snap.data();
+            setUserDoc({ id: snap.id, ...userData });
+            setUserRole(userData.role || 'seller');
+            setShopId(userData.shopId || null);
+            setBranchId(userData.branchId || null);
           } else {
-            setCurrentUser(null);
-            setUserDoc(null);
-            setUserRole(null);
-            setShopId(null);
-            setBranchId(null);
+            // If not found by UID, search by email (for shopkeepers created via admin panel)
+            const q = query(collection(db, 'users'), where('email', '==', user.email));
+            const querySnap = await getDocs(q);
+            if (!querySnap.empty) {
+              const docSnap = querySnap.docs[0];
+              userData = docSnap.data();
+              setUserDoc({ id: docSnap.id, ...userData });
+              setUserRole(userData.role || 'seller');
+              setShopId(userData.shopId || null);
+              setBranchId(userData.branchId || null);
+            } else {
+              // No user document – treat as unknown (e.g., customer or unregistered)
+              setUserDoc(null);
+              setUserRole(null);
+              setShopId(null);
+              setBranchId(null);
+            }
+          }
+
+          // Set session cookies for middleware if user exists
+          if (userData && typeof document !== 'undefined') {
+            document.cookie = `wallar_session=1; path=/; max-age=86400`;
+            document.cookie = `wallar_role=${userData.role || 'seller'}; path=/; max-age=86400`;
           }
         } catch (err) {
           console.error('Error loading user profile:', err);
