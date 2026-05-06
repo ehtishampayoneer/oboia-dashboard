@@ -12,7 +12,7 @@ import { getAllCraftsmen, addCraftsman, payBonus, getBonusHistory } from '../../
 import toast from 'react-hot-toast';
 
 export default function CraftsmenPage() {
-  const { shopId, currentUser } = useAuth();
+  const { shopId, currentUser, isAdmin } = useAuth();
   const { t } = useLanguage();
   const { format } = useCurrency();
 
@@ -27,17 +27,17 @@ export default function CraftsmenPage() {
   const [form, setForm] = useState({ name: '', phone: '' });
 
   const fetchData = async () => {
-    if (!shopId) return;
     setLoading(true);
     try {
-      const data = await getAllCraftsmen(shopId);
+      const effectiveShopId = isAdmin ? null : shopId;
+      const data = await getAllCraftsmen(effectiveShopId);
       setCraftsmen(data);
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => { fetchData(); }, [shopId]);
+  useEffect(() => { fetchData(); }, [shopId, isAdmin]);
 
   const handleAdd = async () => {
     if (!form.name) { toast.error('Name is required'); return; }
