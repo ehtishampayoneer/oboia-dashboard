@@ -34,12 +34,14 @@ export default function WallpapersPage() {
   const [actionLoading, setActionLoading] = useState(false);
 
   const fetchData = async () => {
-    if (!shopId) return;
     setLoading(true);
     try {
+      // For admin, pass null shopId to get all wallpapers
+      const effectiveShopId = isAdmin ? null : shopId;
       const [wp, cats] = await Promise.all([
-        getAllWallpapers(shopId, filters),
-        getDocs(query(collection(db, 'categories'), where('shopId', '==', shopId))),
+        getAllWallpapers(effectiveShopId, filters),
+        // For categories: if admin, get all categories (no shop filter); else filter by shopId
+        getDocs(query(collection(db, 'categories'), ...(isAdmin ? [] : [where('shopId', '==', shopId)]))),
       ]);
       setWallpapers(wp);
       setCategories(cats.docs.map((d) => ({ id: d.id, ...d.data() })));
@@ -48,7 +50,7 @@ export default function WallpapersPage() {
     }
   };
 
-  useEffect(() => { fetchData(); }, [shopId, filters]);
+  useEffect(() => { fetchData(); }, [shopId, filters, isAdmin]);
 
   const handleApprove = async (id) => {
     setActionLoading(true);
