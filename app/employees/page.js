@@ -15,7 +15,7 @@ import { db } from '../../lib/firebase';
 import toast from 'react-hot-toast';
 
 export default function EmployeesPage() {
-  const { shopId } = useAuth();
+  const { shopId, isAdmin } = useAuth();
   const { t } = useLanguage();
   const { format } = useCurrency();
 
@@ -33,12 +33,13 @@ export default function EmployeesPage() {
   });
 
   const fetchData = async () => {
-    if (!shopId) return;
     setLoading(true);
     try {
+      const effectiveShopId = isAdmin ? null : shopId;
       const [emps, branchSnap] = await Promise.all([
-        getAllEmployees(shopId),
-        getDocs(query(collection(db, 'branches'), where('shopId', '==', shopId))),
+        getAllEmployees(effectiveShopId),
+        // For branches: if admin, get all branches; else filter by shopId
+        getDocs(query(collection(db, 'branches'), ...(isAdmin ? [] : [where('shopId', '==', shopId)]))),
       ]);
       setEmployees(emps);
       setBranches(branchSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
@@ -47,7 +48,7 @@ export default function EmployeesPage() {
     }
   };
 
-  useEffect(() => { fetchData(); }, [shopId]);
+  useEffect(() => { fetchData(); }, [shopId, isAdmin]);
 
   const handleAdd = async () => {
     if (!form.name || !form.email || !form.password) {
@@ -86,7 +87,8 @@ export default function EmployeesPage() {
   const openPerf = async (emp) => {
     setPerfModal(emp);
     setPerfData(null);
-    const data = await getEmployeePerformance(emp.uid || emp.id, shopId);
+    const effectiveShopId = isAdmin ? null : shopId;
+    const data = await getEmployeePerformance(emp.uid || emp.id, effectiveShopId);
     setPerfData(data);
   };
 
