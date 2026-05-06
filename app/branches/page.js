@@ -15,7 +15,7 @@ import { db } from '../../lib/firebase';
 import toast from 'react-hot-toast';
 
 export default function BranchesPage() {
-  const { shopId, currentUser, branchId: activeBranchId, setBranchId } = useAuth();
+  const { shopId, currentUser, branchId: activeBranchId, setBranchId, isAdmin } = useAuth();
   const { t, currentLang } = useLanguage();
   const { format } = useCurrency();
 
@@ -28,16 +28,25 @@ export default function BranchesPage() {
   const [form, setForm] = useState({ nameUz: '', nameEn: '', address: '', phone: '' });
 
   const fetchData = async () => {
-    if (!shopId) return;
     setLoading(true);
     try {
-      const [branchSnap, salesSnap] = await Promise.all([
-        getDocs(query(collection(db, 'branches'), where('shopId', '==', shopId))),
-        getDocs(query(collection(db, 'sales'), where('shopId', '==', shopId), where('status', '==', 'closed'))),
-      ]);
+      // For admin: get all branches (no shop filter). For shopkeeper: filter by shopId.
+      let branchesQuery = collection(db, 'branches');
+      if (!isAdmin && shopId) {
+        branchesQuery = query(branchesQuery, where('shopId', '==', shopId));
+      }
+      const branchSnap = await getDocs(branchesQuery);
       const branchData = branchSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
       setBranches(branchData);
 
+      // Get closed sales for statistics (also respect role)
+      let salesQuery = collection(db, 'sales');
+      if (!isAdmin && shopId) {
+        salesQuery = query(salesQuery, where('shopId', '==', shopId), where('status', '==', 'closed'));
+      } else if (isAdmin) {
+        salesQuery = query(salesQuery, where('status', '==', 'closed'));
+      }
+      const salesSnap = await getDocs(salesQuery);
       const map = {};
       salesSnap.docs.forEach((d) => {
         const s = d.data();
@@ -53,7 +62,7 @@ export default function BranchesPage() {
     }
   };
 
-  useEffect(() => { fetchData(); }, [shopId]);
+  useEffect(() => { fetchData(); }, [shopId, isAdmin]);
 
   const handleAdd = async () => {
     if (!form.nameUz || !form.nameEn) { toast.error('Name required in both languages'); return; }
@@ -61,7 +70,7 @@ export default function BranchesPage() {
     try {
       await addDoc(collection(db, 'branches'), {
         ...form,
-        shopId,
+        shopId: isAdmin ? null : shopId,
         isActive: true,
         createdBy: currentUser.uid,
         createdAt: serverTimestamp(),
