@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import {
-  collection, getDocs, addDoc, updateDoc, doc, serverTimestamp,
+  collection, getDocs, addDoc, updateDoc, doc, serverTimestamp, query, where,
 } from 'firebase/firestore';
 import { Plus, Eye, EyeOff, Copy, RefreshCw, ToggleLeft, ToggleRight } from 'lucide-react';
 import Layout from '../../components/Layout';
@@ -52,14 +52,26 @@ export default function ShopsPage() {
 
   useEffect(() => { fetchShops(); }, []);
 
+  // Check if a user document already exists for a given email
+  const checkUserExists = async (email) => {
+    const q = query(collection(db, 'users'), where('email', '==', email));
+    const snap = await getDocs(q);
+    return !snap.empty;
+  };
+
   const handleCreate = async () => {
     if (!form.nameUz || !form.nameEn) {
       toast.error('Name is required in both languages');
       return;
     }
+    if (!form.sellerEmail) {
+      toast.error('Seller email is required');
+      return;
+    }
     setSaving(true);
     try {
-      await addDoc(collection(db, 'shops'), {
+      // 1. Create the shop document
+      const shopData = {
         nameUz: form.nameUz,
         nameEn: form.nameEn,
         sellerEmail: form.sellerEmail,
@@ -70,13 +82,33 @@ export default function ShopsPage() {
         createdBy: currentUser?.uid,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
-      });
-      toast.success(t('shops_create_success'));
+      };
+      const shopRef = await addDoc(collection(db, 'shops'), shopData);
+      const shopId = shopRef.id;
+
+      // 2. Create corresponding user document for the shopkeeper (if not exists)
+      const userExists = await checkUserExists(form.sellerEmail);
+      if (!userExists) {
+        await addDoc(collection(db, 'users'), {
+          email: form.sellerEmail,
+          role: 'shopkeeper',
+          shopId: shopId,
+          displayName: form.nameEn, // optional, can be used in dashboard
+          createdBy: currentUser?.uid,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+        toast.success('Shop created and shopkeeper user added');
+      } else {
+        toast.success('Shop created (user already existed, no duplicate created)');
+      }
+
       setShowModal(false);
       setForm({ nameUz: '', nameEn: '', sellerEmail: '', token: generateToken() });
       fetchShops();
     } catch (e) {
-      toast.error('Failed to create shop');
+      console.error(e);
+      toast.error('Failed to create shop: ' + e.message);
     } finally {
       setSaving(false);
     }
