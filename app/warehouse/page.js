@@ -150,7 +150,6 @@ export default function WarehousePage() {
     },
   ];
 
-  // Custom row class for low stock
   const rowClassName = (row) =>
     row.stock <= (row.lowStockThreshold || 0) ? 'border-l-2 border-error' : '';
 
@@ -231,19 +230,33 @@ export default function WarehousePage() {
               <table className="w-full text-sm">
                 <thead className="sticky top-0 bg-card">
                   <tr className="border-b border-white/5">
-                    {[t('warehouse_movement_date'), t('warehouse_movement_type'), t('warehouse_movement_rolls'), t('warehouse_movement_reason'), t('warehouse_movement_by')].map((h) => (
-                      <th key={h} className="px-4 py-2.5 text-left text-xs text-subtext font-semibold">{h}</th>
+                    {[
+                      t('warehouse_movement_date'),
+                      t('warehouse_movement_type'),
+                      t('warehouse_movement_rolls'),
+                      t('warehouse_movement_reason'),
+                      t('warehouse_movement_by')
+                    ].map((h, idx) => (
+                      <th key={idx} className="px-4 py-2.5 text-left text-xs text-subtext font-semibold">{h}</th>
                     ))}
-                  <tr>
+                  </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
                   {movements.length === 0 ? (
-                    <tr><td colSpan={5} className="px-4 py-12 text-center text-subtext text-sm">{t('common_no_results')}</td></tr>
+                    <tr>
+                      <td colSpan={5} className="px-4 py-12 text-center text-subtext text-sm">
+                        {t('common_no_results')}
+                      </td>
+                    </tr>
                   ) : (
                     movements.map((m) => (
                       <tr key={m.id} className="hover:bg-surface transition-colors">
-                        <td className="px-4 py-3 text-subtext text-xs">{m.createdAt?.toDate?.()?.toLocaleString() || '—'}</td>
-                        <td className="px-4 py-3"><StatusBadge status={m.type} size="xs" /></td>
+                        <td className="px-4 py-3 text-subtext text-xs">
+                          {m.createdAt?.toDate?.()?.toLocaleString() || '—'}
+                        </td>
+                        <td className="px-4 py-3">
+                          <StatusBadge status={m.type} size="xs" />
+                        </td>
                         <td className="px-4 py-3 text-text-main font-medium">{m.rolls}</td>
                         <td className="px-4 py-3 text-subtext text-xs">{m.reason || '—'}</td>
                         <td className="px-4 py-3 text-subtext text-xs">{m.recordedBy || '—'}</td>
