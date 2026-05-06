@@ -15,7 +15,7 @@ import { db } from '../../lib/firebase';
 import toast from 'react-hot-toast';
 
 export default function CategoriesPage() {
-  const { shopId, currentUser } = useAuth();
+  const { shopId, currentUser, isAdmin } = useAuth();
   const { t, currentLang } = useLanguage();
 
   const [categories, setCategories] = useState([]);
@@ -26,25 +26,31 @@ export default function CategoriesPage() {
   const [actionLoading, setActionLoading] = useState(false);
   const [dragOver, setDragOver] = useState(null);
   const [dragging, setDragging] = useState(null);
-
   const [form, setForm] = useState({ nameUz: '', nameEn: '', image: '' });
 
   const fetchData = async () => {
-    if (!shopId) return;
     setLoading(true);
     try {
-      const snap = await getDocs(
-        query(
-          collection(db, 'categories'),
-          where('shopId', '==', shopId),
-          orderBy('sortOrder', 'asc')
-        )
-      );
+      // For admin: get all categories (no shop filter). For shopkeeper: filter by shopId.
+      let q = collection(db, 'categories');
+      if (!isAdmin && shopId) {
+        q = query(q, where('shopId', '==', shopId), orderBy('sortOrder', 'asc'));
+      } else if (isAdmin) {
+        q = query(q, orderBy('sortOrder', 'asc'));
+      } else {
+        // No shopId and not admin – just return empty
+        setCategories([]);
+        return;
+      }
+      const snap = await getDocs(q);
       const cats = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      // Count wallpapers per category
-      const wpSnap = await getDocs(
-        query(collection(db, 'wallpapers'), where('shopId', '==', shopId))
-      );
+
+      // Get wallpaper counts (also filtered by shopId or admin)
+      let wpQuery = collection(db, 'wallpapers');
+      if (!isAdmin && shopId) {
+        wpQuery = query(wpQuery, where('shopId', '==', shopId));
+      }
+      const wpSnap = await getDocs(wpQuery);
       const countMap = {};
       wpSnap.docs.forEach((d) => {
         const catId = d.data().categoryId;
@@ -56,7 +62,7 @@ export default function CategoriesPage() {
     }
   };
 
-  useEffect(() => { fetchData(); }, [shopId]);
+  useEffect(() => { fetchData(); }, [shopId, isAdmin]);
 
   const handleAdd = async () => {
     if (!form.nameUz || !form.nameEn) { toast.error('Name required in both languages'); return; }
@@ -64,7 +70,7 @@ export default function CategoriesPage() {
     try {
       await addDoc(collection(db, 'categories'), {
         ...form,
-        shopId,
+        shopId: isAdmin ? null : shopId,   // for admin, shopId can be null (global category)
         sortOrder: categories.length,
         createdBy: currentUser.uid,
         createdAt: serverTimestamp(),
@@ -129,7 +135,6 @@ export default function CategoriesPage() {
     setCategories(reordered);
     setDragging(null);
     setDragOver(null);
-    // Persist sort order
     for (let i = 0; i < reordered.length; i++) {
       await updateDoc(doc(db, 'categories', reordered[i].id), { sortOrder: i });
     }
