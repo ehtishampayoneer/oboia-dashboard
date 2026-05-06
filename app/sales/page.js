@@ -15,7 +15,7 @@ import { exportToExcel } from '../../lib/db/reports';
 import toast from 'react-hot-toast';
 
 export default function SalesPage() {
-  const { shopId } = useAuth();
+  const { shopId, isAdmin } = useAuth();
   const { t } = useLanguage();
   const { format } = useCurrency();
   const router = useRouter();
@@ -29,12 +29,12 @@ export default function SalesPage() {
   const [exporting, setExporting] = useState(false);
 
   const fetchData = async () => {
-    if (!shopId) return;
     setLoading(true);
     try {
+      const effectiveShopId = isAdmin ? null : shopId;
       const [salesData, emps] = await Promise.all([
-        getAllSales(shopId, filters),
-        getAllEmployees(shopId),
+        getAllSales(effectiveShopId, filters),
+        getAllEmployees(isAdmin ? null : shopId),
       ]);
       setSales(salesData);
       setEmployees(emps);
@@ -43,7 +43,7 @@ export default function SalesPage() {
     }
   };
 
-  useEffect(() => { fetchData(); }, [shopId, filters]);
+  useEffect(() => { fetchData(); }, [shopId, filters, isAdmin]);
 
   const totalRevenue = sales.reduce((s, r) => s + (r.totalAmount || 0), 0);
   const totalProfit = sales.reduce((s, r) => s + ((r.totalAmount || 0) - (r.totalCost || 0)), 0);
