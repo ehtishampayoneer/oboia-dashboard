@@ -15,7 +15,7 @@ import StatusBadge from '../../components/StatusBadge';
 import toast from 'react-hot-toast';
 
 export default function SuppliersPage() {
-  const { shopId, currentUser } = useAuth();
+  const { shopId, currentUser, isAdmin } = useAuth();
   const { t } = useLanguage();
   const { format } = useCurrency();
 
@@ -31,17 +31,17 @@ export default function SuppliersPage() {
   const [form, setForm] = useState({ name: '', phone: '', address: '' });
 
   const fetchData = async () => {
-    if (!shopId) return;
     setLoading(true);
     try {
-      const data = await getAllSuppliers(shopId);
+      const effectiveShopId = isAdmin ? null : shopId;
+      const data = await getAllSuppliers(effectiveShopId);
       setSuppliers(data);
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => { fetchData(); }, [shopId]);
+  useEffect(() => { fetchData(); }, [shopId, isAdmin]);
 
   const handleAdd = async () => {
     if (!form.name) { toast.error('Name is required'); return; }
@@ -80,9 +80,10 @@ export default function SuppliersPage() {
     setDetailModal(supplier);
     setDetailTxns([]);
     setDetailProducts([]);
+    const effectiveShopId = isAdmin ? null : shopId;
     const [txns, products] = await Promise.all([
       getSupplierTransactions(supplier.id),
-      getSupplierProducts(shopId, supplier.id),
+      getSupplierProducts(effectiveShopId, supplier.id),
     ]);
     setDetailTxns(txns);
     setDetailProducts(products);
