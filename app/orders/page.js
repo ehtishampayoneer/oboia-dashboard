@@ -17,7 +17,7 @@ import toast from 'react-hot-toast';
 const TABS = ['all', 'pending', 'negotiating', 'ready', 'closed', 'cancelled'];
 
 export default function OrdersPage() {
-  const { shopId, currentUser } = useAuth();
+  const { shopId, currentUser, isAdmin } = useAuth();
   const { t } = useLanguage();
   const { format } = useCurrency();
   const router = useRouter();
@@ -29,15 +29,17 @@ export default function OrdersPage() {
   const [filters, setFilters] = useState({ dateFrom: '', dateTo: '', branchId: '' });
 
   const fetchData = async () => {
-    if (!shopId) return;
     setLoading(true);
     try {
+      // For admin, pass null shopId to get all orders
+      const effectiveShopId = isAdmin ? null : shopId;
       const [ordersData, branchSnap] = await Promise.all([
-        getAllOrders(shopId, {
+        getAllOrders(effectiveShopId, {
           status: activeTab === 'all' ? '' : activeTab,
           ...filters,
         }),
-        getDocs(query(collection(db, 'branches'), where('shopId', '==', shopId))),
+        // For branches: if admin get all, else filter by shopId
+        getDocs(query(collection(db, 'branches'), ...(isAdmin ? [] : [where('shopId', '==', shopId)]))),
       ]);
       setOrders(ordersData);
       setBranches(branchSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
@@ -46,7 +48,7 @@ export default function OrdersPage() {
     }
   };
 
-  useEffect(() => { fetchData(); }, [shopId, activeTab, filters]);
+  useEffect(() => { fetchData(); }, [shopId, activeTab, filters, isAdmin]);
 
   const handleStatusChange = async (order, newStatus) => {
     try {
