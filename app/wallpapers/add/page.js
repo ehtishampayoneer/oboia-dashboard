@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, AlertTriangle, Sparkles, Info } from 'lucide-react';
 import Layout from '../../../components/Layout';
 import ImageUpload from '../../../components/ImageUpload';
 import { useAuth } from '../../../context/AuthContext';
@@ -27,6 +27,7 @@ export default function AddWallpaperPage() {
   const [images, setImages] = useState([]);
   const [arTexture, setArTexture] = useState('');
   const [saving, setSaving] = useState(false);
+  const [touched, setTouched] = useState(false); // CHANGED: track first save attempt for inline errors
 
   const [form, setForm] = useState({
     nameUz: '', nameEn: '', descriptionUz: '', descriptionEn: '',
@@ -54,10 +55,59 @@ export default function AddWallpaperPage() {
 
   const set = (key, val) => setForm((f) => ({ ...f, [key]: val }));
 
+  // ── CHANGED: Centralized validation. Returns array of human-readable errors.
+  const validationErrors = useMemo(() => {
+    const errs = [];
+    if (!form.nameUz.trim()) errs.push({ key: 'nameUz', msg: 'Name (Uzbek) is required' });
+    if (!form.nameEn.trim()) errs.push({ key: 'nameEn', msg: 'Name (English) is required' });
+    if (!form.sellPrice || Number(form.sellPrice) <= 0) {
+      errs.push({ key: 'sellPrice', msg: 'Sell price must be greater than 0' });
+    }
+    if (!form.costPrice || Number(form.costPrice) <= 0) {
+      errs.push({ key: 'costPrice', msg: 'Cost price must be greater than 0' });
+    }
+    if (Number(form.rollWidthCm) <= 0) {
+      errs.push({ key: 'rollWidthCm', msg: 'Roll width must be greater than 0 cm' });
+    }
+    if (Number(form.rollLengthM) <= 0) {
+      errs.push({ key: 'rollLengthM', msg: 'Roll length must be greater than 0 m' });
+    }
+    // CHANGED: Image validation — at least ONE image OR AR texture must exist
+    if (images.length === 0 && !arTexture) {
+      errs.push({
+        key: 'images',
+        msg: 'Upload at least one image (regular image or AR texture) — required for AR preview',
+      });
+    }
+    return errs;
+  }, [form, images, arTexture]);
+
+  // CHANGED: AR readiness — what will actually be sent to mobile app
+  const arReadiness = useMemo(() => {
+    const hasArTexture = !!arTexture;
+    const hasImage = images.length > 0;
+    if (hasArTexture) {
+      return { ready: true, source: 'ar_texture', label: 'AR Ready · using AR texture' };
+    }
+    if (hasImage) {
+      return { ready: true, source: 'image_fallback', label: 'AR Ready · using first image as fallback' };
+    }
+    return { ready: false, source: 'none', label: 'Add at least one image to enable AR' };
+  }, [images, arTexture]);
+
+  const errorFor = (key) => {
+    if (!touched) return null;
+    return validationErrors.find((e) => e.key === key)?.msg || null;
+  };
+
   const handleSave = async () => {
-    if (!form.nameUz || !form.nameEn) { toast.error('Name required in both languages'); return; }
-    if (!form.sellPrice || Number(form.sellPrice) <= 0) { toast.error('Sell price required'); return; }
-    if (!form.costPrice || Number(form.costPrice) <= 0) { toast.error('Cost price required'); return; }
+    setTouched(true);
+    if (validationErrors.length > 0) {
+      toast.error(validationErrors[0].msg);
+      // Scroll to top so user sees the validation banner
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
 
     setSaving(true);
     try {
@@ -65,6 +115,7 @@ export default function AddWallpaperPage() {
         shopId,
         {
           ...form,
+          // CHANGED: Pass numbers cleanly; data layer handles cm→m conversion
           sellPrice: Number(form.sellPrice),
           costPrice: Number(form.costPrice),
           rollWidthCm: Number(form.rollWidthCm),
@@ -82,7 +133,8 @@ export default function AddWallpaperPage() {
       toast.success(t('wallpapers_add_success'));
       router.push('/wallpapers');
     } catch (e) {
-      toast.error(t('common_error'));
+      // CHANGED: Show actual error from data layer (includes albedo validation)
+      toast.error(e?.message || t('common_error'));
     } finally {
       setSaving(false);
     }
@@ -99,24 +151,63 @@ export default function AddWallpaperPage() {
     </button>
   );
 
-  const Field = ({ label, children, hint }) => (
+  // CHANGED: Field helper now shows inline validation error
+  const Field = ({ label, children, hint, error }) => (
     <div>
       <label className="block text-sm font-medium text-text-main mb-1.5">{label}</label>
       {children}
-      {hint && <p className="text-subtext text-xs mt-1">{hint}</p>}
+      {error ? (
+        <p className="text-error text-xs mt-1 flex items-center gap-1">
+          <AlertTriangle size={12} />
+          {error}
+        </p>
+      ) : (
+        hint && <p className="text-subtext text-xs mt-1">{hint}</p>
+      )}
+    </div>
+  );
+
+  // CHANGED: AR readiness chip at the top
+  const ARChip = () => (
+    <div
+      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium
+        ${arReadiness.ready
+          ? 'bg-green-500/10 text-success border border-green-500/20'
+          : 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/20'}`}
+    >
+      {arReadiness.ready ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}
+      <span>{arReadiness.label}</span>
     </div>
   );
 
   return (
     <Layout title={t('wallpapers_add')}>
       <div className="max-w-3xl mx-auto space-y-6">
-        <button
-          onClick={() => router.back()}
-          className="flex items-center gap-2 text-subtext hover:text-text-main text-sm transition-colors"
-        >
-          <ArrowLeft size={16} />
-          Back
-        </button>
+        <div className="flex items-center justify-between">
+          <button
+            onClick={() => router.back()}
+            className="flex items-center gap-2 text-subtext hover:text-text-main text-sm transition-colors"
+          >
+            <ArrowLeft size={16} />
+            Back
+          </button>
+          <ARChip />
+        </div>
+
+        {/* CHANGED: Validation summary banner — only shows after first save attempt */}
+        {touched && validationErrors.length > 0 && (
+          <div className="bg-error/10 border border-error/30 rounded-xl px-4 py-3 space-y-1">
+            <div className="flex items-center gap-2 text-error text-sm font-semibold">
+              <AlertTriangle size={16} />
+              Please fix the following before saving:
+            </div>
+            <ul className="text-error/90 text-xs ml-6 list-disc space-y-0.5">
+              {validationErrors.map((e) => (
+                <li key={e.key}>{e.msg}</li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {!isAdmin && (
           <div className="bg-yellow-500/10 border border-yellow-500/20 rounded-xl px-4 py-3 text-yellow-400 text-sm">
@@ -133,11 +224,11 @@ export default function AddWallpaperPage() {
           </div>
           <div className="border border-white/10 rounded-b-lg rounded-tr-lg p-4 bg-surface space-y-4">
             {nameTab === 'uz' ? (
-              <Field label={t('wallpapers_name_uz')}>
+              <Field label={t('wallpapers_name_uz')} error={errorFor('nameUz')}>
                 <input type="text" value={form.nameUz} onChange={(e) => set('nameUz', e.target.value)} />
               </Field>
             ) : (
-              <Field label={t('wallpapers_name_en')}>
+              <Field label={t('wallpapers_name_en')} error={errorFor('nameEn')}>
                 <input type="text" value={form.nameEn} onChange={(e) => set('nameEn', e.target.value)} />
               </Field>
             )}
@@ -183,11 +274,29 @@ export default function AddWallpaperPage() {
         <div className="bg-card border border-white/5 rounded-xl p-6">
           <h3 className="text-text-main font-semibold mb-4">Pricing</h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Field label={t('wallpapers_sell_price')} hint={`≈ $${sellUSD} ${t('wallpapers_usd_equiv')}`}>
-              <input type="number" min="0" value={form.sellPrice} onChange={(e) => set('sellPrice', e.target.value)} />
+            <Field
+              label={t('wallpapers_sell_price')}
+              hint={`≈ $${sellUSD} ${t('wallpapers_usd_equiv')}`}
+              error={errorFor('sellPrice')}
+            >
+              <input
+                type="number"
+                min="0"
+                value={form.sellPrice}
+                onChange={(e) => set('sellPrice', e.target.value)}
+              />
             </Field>
-            <Field label={t('wallpapers_cost_price')} hint={`≈ $${costUSD} ${t('wallpapers_usd_equiv')}`}>
-              <input type="number" min="0" value={form.costPrice} onChange={(e) => set('costPrice', e.target.value)} />
+            <Field
+              label={t('wallpapers_cost_price')}
+              hint={`≈ $${costUSD} ${t('wallpapers_usd_equiv')}`}
+              error={errorFor('costPrice')}
+            >
+              <input
+                type="number"
+                min="0"
+                value={form.costPrice}
+                onChange={(e) => set('costPrice', e.target.value)}
+              />
             </Field>
           </div>
         </div>
@@ -196,30 +305,68 @@ export default function AddWallpaperPage() {
         <div className="bg-card border border-white/5 rounded-xl p-6">
           <h3 className="text-text-main font-semibold mb-4">Roll Specifications</h3>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-            <Field label={t('wallpapers_roll_width')}>
-              <input type="number" min="1" value={form.rollWidthCm} onChange={(e) => set('rollWidthCm', e.target.value)} />
+            <Field label={t('wallpapers_roll_width')} error={errorFor('rollWidthCm')} hint="Standard: 53 cm">
+              <input
+                type="number"
+                min="1"
+                value={form.rollWidthCm}
+                onChange={(e) => set('rollWidthCm', e.target.value)}
+              />
             </Field>
-            <Field label={t('wallpapers_roll_length')}>
-              <input type="number" min="1" value={form.rollLengthM} onChange={(e) => set('rollLengthM', e.target.value)} />
+            <Field label={t('wallpapers_roll_length')} error={errorFor('rollLengthM')} hint="Standard: 10 m">
+              <input
+                type="number"
+                min="1"
+                value={form.rollLengthM}
+                onChange={(e) => set('rollLengthM', e.target.value)}
+              />
             </Field>
             <Field label={t('wallpapers_roll_sqm')}>
-              <input type="text" value={`${rollSqm} m²`} readOnly className="bg-dark/50 text-primary font-semibold cursor-default" />
+              <input
+                type="text"
+                value={`${rollSqm} m²`}
+                readOnly
+                className="bg-dark/50 text-primary font-semibold cursor-default"
+              />
             </Field>
-            <Field label={t('wallpapers_pattern_repeat')}>
-              <input type="number" min="0" value={form.patternRepeatCm} onChange={(e) => set('patternRepeatCm', e.target.value)} />
+            <Field label={t('wallpapers_pattern_repeat')} hint="Vertical pattern repeat (cm). Use 0 for non-repeating">
+              <input
+                type="number"
+                min="0"
+                value={form.patternRepeatCm}
+                onChange={(e) => set('patternRepeatCm', e.target.value)}
+              />
             </Field>
             <Field label={t('wallpapers_initial_stock')}>
-              <input type="number" min="0" value={form.initialStock} onChange={(e) => set('initialStock', e.target.value)} />
+              <input
+                type="number"
+                min="0"
+                value={form.initialStock}
+                onChange={(e) => set('initialStock', e.target.value)}
+              />
             </Field>
             <Field label={t('wallpapers_low_stock_threshold')}>
-              <input type="number" min="0" value={form.lowStockThreshold} onChange={(e) => set('lowStockThreshold', e.target.value)} />
+              <input
+                type="number"
+                min="0"
+                value={form.lowStockThreshold}
+                onChange={(e) => set('lowStockThreshold', e.target.value)}
+              />
             </Field>
           </div>
         </div>
 
-        {/* Images */}
+        {/* CHANGED: Images section with stronger UX */}
         <div className="bg-card border border-white/5 rounded-xl p-6 space-y-4">
-          <h3 className="text-text-main font-semibold">{t('wallpapers_images')}</h3>
+          <div className="flex items-center justify-between">
+            <h3 className="text-text-main font-semibold">{t('wallpapers_images')}</h3>
+            {images.length > 0 && (
+              <span className="text-xs text-success flex items-center gap-1">
+                <CheckCircle2 size={12} />
+                {images.length} uploaded
+              </span>
+            )}
+          </div>
           <ImageUpload
             multiple
             folder={`wallpapers/${shopId}`}
@@ -227,8 +374,35 @@ export default function AddWallpaperPage() {
             onUpload={(urls) => setImages((prev) => [...prev, ...(Array.isArray(urls) ? urls : [urls])])}
             onRemove={(_, i) => setImages((prev) => prev.filter((_, j) => j !== i))}
           />
+          {touched && errorFor('images') && (
+            <p className="text-error text-xs flex items-center gap-1">
+              <AlertTriangle size={12} />
+              {errorFor('images')}
+            </p>
+          )}
 
-          <h3 className="text-text-main font-semibold">{t('wallpapers_ar_texture')}</h3>
+          <div className="flex items-center justify-between pt-4 border-t border-white/5">
+            <h3 className="text-text-main font-semibold flex items-center gap-2">
+              <Sparkles size={14} className="text-primary" />
+              {t('wallpapers_ar_texture')}
+            </h3>
+            {arTexture && (
+              <span className="text-xs text-success flex items-center gap-1">
+                <CheckCircle2 size={12} />
+                AR Ready
+              </span>
+            )}
+            {!arTexture && images.length > 0 && (
+              <span className="text-xs text-yellow-400 flex items-center gap-1">
+                <Info size={12} />
+                Auto · using first image
+              </span>
+            )}
+          </div>
+          <p className="text-subtext text-xs -mt-2">
+            High-resolution seamless tile of just the pattern. Used in mobile AR preview.
+            If left empty, the first regular image will be used.
+          </p>
           <ImageUpload
             folder={`ar-textures/${shopId}`}
             existingUrls={arTexture ? [arTexture] : []}
@@ -254,7 +428,7 @@ export default function AddWallpaperPage() {
           </button>
         </div>
 
-        {/* Actions */}
+        {/* CHANGED: Actions with disabled state */}
         <div className="flex items-center justify-end gap-3 pb-6">
           <button
             onClick={() => router.back()}
@@ -266,9 +440,12 @@ export default function AddWallpaperPage() {
             onClick={handleSave}
             disabled={saving}
             className="px-6 py-2.5 bg-primary hover:bg-secondary text-dark font-bold text-sm rounded-lg
-              transition-all hover:shadow-glow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              transition-all hover:shadow-glow-sm disabled:opacity-50 disabled:cursor-not-allowed
+              flex items-center gap-2"
           >
-            {saving ? t('common_loading') : (isAdmin ? t('common_save') : t('wallpapers_pending_approval'))}
+            {saving
+              ? t('common_loading')
+              : (isAdmin ? t('common_save') : t('wallpapers_pending_approval'))}
           </button>
         </div>
       </div>
