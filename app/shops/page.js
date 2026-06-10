@@ -36,7 +36,6 @@ function generateToken() {
 }
 
 // Compute subscription status from a shop document.
-// Returns: 'active' | 'expiring' | 'grace' | 'expired' | 'none'
 function getSubscriptionStatus(shop) {
   if (!shop?.subscription?.expiresAt) return 'none';
   const expiresAt = shop.subscription.expiresAt?.toDate?.()
@@ -57,23 +56,23 @@ function getDaysRemaining(shop) {
   return Math.ceil((expiresAt - new Date()) / (24 * 60 * 60 * 1000));
 }
 
-// Inline badge component for subscription status
-function SubscriptionBadge({ shop }) {
+// Inline badge component for subscription status (uses t() for labels)
+function SubscriptionBadge({ shop, t }) {
   const status = getSubscriptionStatus(shop);
   const days = getDaysRemaining(shop);
 
   const config = {
-    active:   { color: 'bg-green-500/15 text-success border-green-500/30',  label: 'Active' },
-    expiring: { color: 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30', label: 'Expiring' },
-    grace:    { color: 'bg-orange-500/15 text-warning border-orange-500/30', label: 'Grace' },
-    expired:  { color: 'bg-red-500/15 text-error border-red-500/30',        label: 'Expired' },
-    none:     { color: 'bg-gray-500/15 text-subtext border-gray-500/30',    label: 'No sub' },
+    active:   { color: 'bg-green-500/15 text-success border-green-500/30',  label: t('sub_status_active') },
+    expiring: { color: 'bg-yellow-500/15 text-yellow-400 border-yellow-500/30', label: t('sub_status_expiring') },
+    grace:    { color: 'bg-orange-500/15 text-warning border-orange-500/30', label: t('sub_status_grace') },
+    expired:  { color: 'bg-red-500/15 text-error border-red-500/30',        label: t('sub_status_expired') },
+    none:     { color: 'bg-gray-500/15 text-subtext border-gray-500/30',    label: t('sub_status_none') },
   };
   const c = config[status] || config.none;
   const daysLabel = days === null ? '' :
-    days > 0 ? `${days}d left` :
-    days === 0 ? 'today' :
-    `${Math.abs(days)}d over`;
+    days > 0 ? t('sub_days_left').replace('{n}', days) :
+    days === 0 ? t('sub_today') :
+    t('sub_days_over').replace('{n}', Math.abs(days));
 
   return (
     <div className="flex items-center gap-2">
@@ -110,7 +109,7 @@ export default function ShopsPage() {
       const snap = await getDocs(collection(db, 'shops'));
       setShops(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     } catch (e) {
-      toast.error('Failed to load shops');
+      toast.error(t('common_error'));
     } finally {
       setLoading(false);
     }
@@ -129,11 +128,11 @@ export default function ShopsPage() {
   // ──────────────────────────────────────────────────────────────────────
   const handleCreate = async () => {
     if (!form.nameUz || !form.nameEn) {
-      toast.error('Name is required in both languages');
+      toast.error(t('shops_name_required'));
       return;
     }
     if (!form.sellerEmail) {
-      toast.error('Seller email is required');
+      toast.error(t('shops_email_required'));
       return;
     }
     setSaving(true);
@@ -150,7 +149,6 @@ export default function ShopsPage() {
         totalSales: 0,
         exchangeRate: 12500,
 
-        // Subscription auto-started for first month
         subscription: {
           active: true,
           plan: SUB_DEFAULTS.plan,
@@ -169,7 +167,6 @@ export default function ShopsPage() {
       const shopRef = await addDoc(collection(db, 'shops'), shopData);
       const shopId = shopRef.id;
 
-      // Record first subscription period in audit history
       await addDoc(collection(db, 'shops', shopId, 'subscriptionHistory'), {
         paidAt: Timestamp.fromDate(now),
         amountUsd: SUB_DEFAULTS.amountUsd,
@@ -177,7 +174,7 @@ export default function ShopsPage() {
         periodEnd: Timestamp.fromDate(expiresAt),
         months: 1,
         recordedBy: currentUser?.uid,
-        notes: 'Initial subscription on shop creation',
+        notes: t('sub_initial_note'),
         createdAt: serverTimestamp(),
       });
 
@@ -192,30 +189,30 @@ export default function ShopsPage() {
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
-        toast.success(`Shop created. Subscription active until ${expiresAt.toLocaleDateString()}. Shopkeeper user added.`);
-      } else {
-        toast.success(`Shop created. Subscription active until ${expiresAt.toLocaleDateString()}.`);
       }
+
+      toast.success(
+        t('shops_create_success_with_date').replace('{date}', expiresAt.toLocaleDateString())
+      );
 
       setShowModal(false);
       setForm({ nameUz: '', nameEn: '', sellerEmail: '', token: generateToken() });
       fetchShops();
     } catch (e) {
       console.error(e);
-      toast.error('Failed to create shop: ' + e.message);
+      toast.error(t('common_error') + ': ' + e.message);
     } finally {
       setSaving(false);
     }
   };
 
   // ──────────────────────────────────────────────────────────────────────
-  // Extend subscription — adds N months. If still active, extends from
-  // current expiry. If lapsed, starts fresh from today.
+  // Extend subscription
   // ──────────────────────────────────────────────────────────────────────
   const handleExtend = async () => {
     if (!extendModal) return;
     if (!extendForm.months || extendForm.months < 1) {
-      toast.error('Months must be at least 1');
+      toast.error(t('sub_months_required'));
       return;
     }
     setExtending(true);
@@ -241,17 +238,19 @@ export default function ShopsPage() {
         periodEnd: Timestamp.fromDate(periodEnd),
         months,
         recordedBy: currentUser?.uid,
-        notes: extendForm.notes || `Extended ${months} month(s)`,
+        notes: extendForm.notes || t('sub_extended_note').replace('{n}', months),
         createdAt: serverTimestamp(),
       });
 
-      toast.success(`Subscription extended. New expiry: ${periodEnd.toLocaleDateString()}`);
+      toast.success(
+        t('sub_extended_success').replace('{date}', periodEnd.toLocaleDateString())
+      );
       setExtendModal(null);
       setExtendForm({ months: 1, amount: SUB_DEFAULTS.amountUsd, notes: '' });
       fetchShops();
     } catch (e) {
       console.error(e);
-      toast.error('Failed to extend: ' + e.message);
+      toast.error(t('common_error') + ': ' + e.message);
     } finally {
       setExtending(false);
     }
@@ -272,10 +271,10 @@ export default function ShopsPage() {
         isActive: !shop.isActive,
         updatedAt: serverTimestamp(),
       });
-      toast.success(t('shops_update_success') || 'Shop updated');
+      toast.success(t('shops_update_success'));
       fetchShops();
     } catch (e) {
-      toast.error('Failed to update shop');
+      toast.error(t('common_error'));
     }
   };
 
@@ -288,11 +287,11 @@ export default function ShopsPage() {
         token: newToken,
         updatedAt: serverTimestamp(),
       });
-      toast.success('Token regenerated');
+      toast.success(t('shops_token_regenerated'));
       setRegenModal(null);
       fetchShops();
     } catch (e) {
-      toast.error('Failed to regenerate token');
+      toast.error(t('common_error'));
     } finally {
       setRegenLoading(false);
     }
@@ -300,12 +299,12 @@ export default function ShopsPage() {
 
   const copyToken = (token) => {
     navigator.clipboard.writeText(token);
-    toast.success(t('shops_token_copied') || 'Token copied');
+    toast.success(t('shops_token_copied'));
   };
 
   const columns = [
     {
-      key: 'name', label: t('shops_name') || 'Name', accessor: 'nameEn',
+      key: 'name', label: t('shops_name'), accessor: 'nameEn',
       render: (_, row) => (
         <div>
           <p className="text-text-main font-medium">{row.nameEn}</p>
@@ -314,7 +313,7 @@ export default function ShopsPage() {
       ),
     },
     {
-      key: 'token', label: t('shops_token') || 'Token', sortable: false,
+      key: 'token', label: t('shops_token'), sortable: false,
       render: (_, row) => (
         <div className="flex items-center gap-2">
           <span className={`font-mono text-sm ${revealedTokens[row.id] ? 'text-primary' : 'text-subtext blur-sm select-none'}`}>
@@ -338,29 +337,29 @@ export default function ShopsPage() {
       ),
     },
     {
-      key: 'sellerEmail', label: t('shops_seller_email') || 'Seller email', accessor: 'sellerEmail',
+      key: 'sellerEmail', label: t('shops_seller_email'), accessor: 'sellerEmail',
       render: (v) => <span className="text-subtext text-sm">{v || '—'}</span>,
     },
     {
-      key: 'subscription', label: 'Subscription', sortable: false,
-      render: (_, row) => <SubscriptionBadge shop={row} />,
+      key: 'subscription', label: t('sub_label'), sortable: false,
+      render: (_, row) => <SubscriptionBadge shop={row} t={t} />,
     },
     {
-      key: 'status', label: t('shops_status') || 'Status', sortable: false,
+      key: 'status', label: t('shops_status'), sortable: false,
       render: (_, row) => <StatusBadge status={row.isActive ? 'active' : 'inactive'} />,
     },
     {
-      key: 'actions', label: t('common_actions') || 'Actions', sortable: false,
+      key: 'actions', label: t('common_actions'), sortable: false,
       render: (_, row) => (
         <div className="flex items-center gap-2 flex-wrap">
           <button
             onClick={() => openExtendModal(row)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
               bg-primary/15 text-primary hover:bg-primary/25 transition-all"
-            title="Extend subscription"
+            title={t('sub_extend')}
           >
             <Calendar size={14} />
-            Extend
+            {t('sub_extend')}
           </button>
           <button
             onClick={() => handleToggleActive(row)}
@@ -371,7 +370,7 @@ export default function ShopsPage() {
               }`}
           >
             {row.isActive ? <ToggleRight size={14} /> : <ToggleLeft size={14} />}
-            {row.isActive ? (t('shops_deactivate') || 'Deactivate') : (t('shops_activate') || 'Activate')}
+            {row.isActive ? t('shops_deactivate') : t('shops_activate')}
           </button>
           <button
             onClick={() => setRegenModal(row)}
@@ -379,7 +378,7 @@ export default function ShopsPage() {
               bg-orange-500/10 text-warning hover:bg-orange-500/20 transition-all"
           >
             <RefreshCw size={14} />
-            {t('shops_regenerate_token') || 'Regen'}
+            {t('shops_regenerate_token')}
           </button>
         </div>
       ),
@@ -387,7 +386,7 @@ export default function ShopsPage() {
   ];
 
   return (
-    <Layout title={t('shops_title') || 'Shops'}>
+    <Layout title={t('shops_title')}>
       <DataTable
         columns={columns}
         data={shops}
@@ -399,7 +398,7 @@ export default function ShopsPage() {
               text-dark font-semibold text-sm transition-all hover:shadow-glow-sm"
           >
             <Plus size={16} />
-            {t('shops_add') || 'Add shop'}
+            {t('shops_add')}
           </button>
         }
       />
@@ -409,24 +408,24 @@ export default function ShopsPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
           <div className="w-full max-w-lg bg-card border border-white/10 rounded-2xl shadow-card animate-slide-up">
             <div className="flex items-center justify-between p-6 border-b border-white/5">
-              <h2 className="text-text-main font-bold text-lg">{t('shops_add') || 'Add shop'}</h2>
+              <h2 className="text-text-main font-bold text-lg">{t('shops_add')}</h2>
               <button onClick={() => setShowModal(false)} className="text-subtext hover:text-text-main">✕</button>
             </div>
             <div className="p-6 space-y-4">
               <div>
-                <label className="block text-sm font-medium text-text-main mb-1.5">{t('shops_name_uz') || 'Name (UZ)'}</label>
+                <label className="block text-sm font-medium text-text-main mb-1.5">{t('shops_name_uz')}</label>
                 <input type="text" value={form.nameUz} onChange={(e) => setForm((f) => ({ ...f, nameUz: e.target.value }))} />
               </div>
               <div>
-                <label className="block text-sm font-medium text-text-main mb-1.5">{t('shops_name_en') || 'Name (EN)'}</label>
+                <label className="block text-sm font-medium text-text-main mb-1.5">{t('shops_name_en')}</label>
                 <input type="text" value={form.nameEn} onChange={(e) => setForm((f) => ({ ...f, nameEn: e.target.value }))} />
               </div>
               <div>
-                <label className="block text-sm font-medium text-text-main mb-1.5">{t('shops_seller_email') || 'Seller email'}</label>
+                <label className="block text-sm font-medium text-text-main mb-1.5">{t('shops_seller_email')}</label>
                 <input type="email" value={form.sellerEmail} onChange={(e) => setForm((f) => ({ ...f, sellerEmail: e.target.value }))} />
               </div>
               <div>
-                <label className="block text-sm font-medium text-text-main mb-1.5">{t('shops_generated_token') || 'Generated token'}</label>
+                <label className="block text-sm font-medium text-text-main mb-1.5">{t('shops_generated_token')}</label>
                 <div className="flex items-center gap-2">
                   <input
                     type="text"
@@ -449,28 +448,29 @@ export default function ShopsPage() {
                 </div>
               </div>
 
-              {/* First subscription period preview */}
               <div className="p-3 bg-primary/5 border border-primary/20 rounded-lg">
                 <div className="flex items-center gap-2 mb-1">
                   <Clock size={14} className="text-primary" />
-                  <p className="text-sm font-medium text-text-main">First subscription period</p>
+                  <p className="text-sm font-medium text-text-main">{t('sub_first_period')}</p>
                 </div>
                 <p className="text-xs text-subtext">
-                  ${SUB_DEFAULTS.amountUsd} / {SUB_DEFAULTS.durationDays} days starting today.
-                  Grace period: {SUB_DEFAULTS.graceDays} days after expiry.
+                  {t('sub_first_period_desc')
+                    .replace('{amount}', SUB_DEFAULTS.amountUsd)
+                    .replace('{days}', SUB_DEFAULTS.durationDays)
+                    .replace('{grace}', SUB_DEFAULTS.graceDays)}
                 </p>
               </div>
             </div>
             <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-white/5">
               <button onClick={() => setShowModal(false)} className="px-4 py-2 text-sm text-subtext hover:text-text-main border border-white/10 rounded-lg">
-                {t('common_cancel') || 'Cancel'}
+                {t('common_cancel')}
               </button>
               <button
                 onClick={handleCreate}
                 disabled={saving}
                 className="px-5 py-2 bg-primary hover:bg-secondary text-dark font-bold text-sm rounded-lg transition-all disabled:opacity-50"
               >
-                {saving ? (t('common_loading') || 'Saving…') : 'Create shop'}
+                {saving ? t('common_loading') : t('shops_create_button')}
               </button>
             </div>
           </div>
@@ -483,24 +483,24 @@ export default function ShopsPage() {
           <div className="w-full max-w-md bg-card border border-white/10 rounded-2xl shadow-card animate-slide-up">
             <div className="flex items-center justify-between p-6 border-b border-white/5">
               <div>
-                <h2 className="text-text-main font-bold text-lg">Extend subscription</h2>
+                <h2 className="text-text-main font-bold text-lg">{t('sub_extend_title')}</h2>
                 <p className="text-subtext text-xs mt-0.5">{extendModal.nameEn}</p>
               </div>
               <button onClick={() => setExtendModal(null)} className="text-subtext hover:text-text-main">✕</button>
             </div>
             <div className="p-6 space-y-4">
               <div className="p-3 bg-surface rounded-lg">
-                <p className="text-xs text-subtext mb-1">Current status</p>
+                <p className="text-xs text-subtext mb-1">{t('sub_current_status')}</p>
                 <div className="flex items-center justify-between">
-                  <SubscriptionBadge shop={extendModal} />
+                  <SubscriptionBadge shop={extendModal} t={t} />
                   <p className="text-xs text-subtext">
-                    {extendModal.subscription?.expiresAt?.toDate?.()?.toLocaleDateString() || 'No expiry'}
+                    {extendModal.subscription?.expiresAt?.toDate?.()?.toLocaleDateString() || t('sub_no_expiry')}
                   </p>
                 </div>
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-text-main mb-1.5">Months</label>
+                <label className="block text-sm font-medium text-text-main mb-1.5">{t('sub_months')}</label>
                 <div className="flex items-center gap-2">
                   {[1, 3, 6, 12].map((m) => (
                     <button
@@ -529,7 +529,7 @@ export default function ShopsPage() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-text-main mb-1.5">Paid amount (USD)</label>
+                <label className="block text-sm font-medium text-text-main mb-1.5">{t('sub_paid_amount')}</label>
                 <input
                   type="number"
                   min="0"
@@ -539,17 +539,20 @@ export default function ShopsPage() {
                   className="text-sm py-2"
                 />
                 <p className="text-xs text-subtext mt-1">
-                  Default: ${SUB_DEFAULTS.amountUsd}/month × {extendForm.months} = ${SUB_DEFAULTS.amountUsd * Number(extendForm.months || 0)}
+                  {t('sub_default_calc')
+                    .replace('{rate}', SUB_DEFAULTS.amountUsd)
+                    .replace('{months}', extendForm.months)
+                    .replace('{total}', SUB_DEFAULTS.amountUsd * Number(extendForm.months || 0))}
                 </p>
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-text-main mb-1.5">Notes (optional)</label>
+                <label className="block text-sm font-medium text-text-main mb-1.5">{t('sub_notes_optional')}</label>
                 <textarea
                   rows={2}
                   value={extendForm.notes}
                   onChange={(e) => setExtendForm((f) => ({ ...f, notes: e.target.value }))}
-                  placeholder="Payment method, reference number, etc."
+                  placeholder={t('sub_notes_placeholder')}
                   className="resize-none text-sm"
                 />
               </div>
@@ -563,7 +566,7 @@ export default function ShopsPage() {
                       const current = extendModal.subscription?.expiresAt?.toDate?.() || now;
                       const base = current > now ? current : now;
                       const newExpiry = new Date(base.getTime() + Number(extendForm.months || 0) * 30 * 86400000);
-                      return `Will extend to ${newExpiry.toLocaleDateString()}`;
+                      return t('sub_will_extend_to').replace('{date}', newExpiry.toLocaleDateString());
                     })()}
                   </p>
                 </div>
@@ -571,14 +574,14 @@ export default function ShopsPage() {
             </div>
             <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-white/5">
               <button onClick={() => setExtendModal(null)} className="px-4 py-2 text-sm text-subtext hover:text-text-main border border-white/10 rounded-lg">
-                {t('common_cancel') || 'Cancel'}
+                {t('common_cancel')}
               </button>
               <button
                 onClick={handleExtend}
                 disabled={extending}
                 className="px-5 py-2 bg-primary hover:bg-secondary text-dark font-bold text-sm rounded-lg transition-all disabled:opacity-50"
               >
-                {extending ? 'Extending…' : 'Confirm extension'}
+                {extending ? t('sub_extending') : t('sub_confirm_extension')}
               </button>
             </div>
           </div>
@@ -590,11 +593,11 @@ export default function ShopsPage() {
         isOpen={!!regenModal}
         onClose={() => setRegenModal(null)}
         onConfirm={handleRegenToken}
-        title={t('shops_regenerate_token') || 'Regenerate token'}
-        message={t('shops_regenerate_warning') || 'This will invalidate the old token. Mobile customers using it will lose access until you share the new token.'}
+        title={t('shops_regenerate_token')}
+        message={t('shops_regenerate_warning')}
         danger
         loading={regenLoading}
-        confirmText={t('shops_regenerate_token') || 'Regenerate'}
+        confirmText={t('shops_regenerate_token')}
       />
     </Layout>
   );
