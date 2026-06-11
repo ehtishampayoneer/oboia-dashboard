@@ -16,6 +16,52 @@ import toast from 'react-hot-toast';
 
 const TABS = ['all', 'pending', 'negotiating', 'ready', 'closed', 'cancelled'];
 
+// ─────────────────────────────────────────────────────────────────────────
+// The mobile app writes orders with an items[] array (one entry per wall /
+// wallpaper). Older orders may have flat fields (wallpaperId, rollsNeeded)
+// at the top level. This helper reads BOTH shapes so nothing breaks.
+// ─────────────────────────────────────────────────────────────────────────
+function getOrderItems(order) {
+  if (Array.isArray(order.items) && order.items.length > 0) {
+    return order.items;
+  }
+  // Legacy flat-field order
+  if (order.wallpaperId) {
+    return [{
+      wallpaperId: order.wallpaperId,
+      wallpaperName: order.wallpaperName || '',
+      sqm: order.totalSqm || 0,
+      rollsNeeded: order.rollsNeeded || 0,
+      totalPrice: order.estimatedPrice || 0,
+    }];
+  }
+  return [];
+}
+
+function orderTotalRolls(order) {
+  return getOrderItems(order).reduce(
+    (s, it) => s + (Number(it.rollsNeeded ?? it.rolls) || 0), 0);
+}
+
+function orderTotalSqm(order) {
+  return getOrderItems(order).reduce(
+    (s, it) => s + (Number(it.sqm) || 0), 0);
+}
+
+function orderTotalPrice(order) {
+  if (order.totalAmount) return Number(order.totalAmount);
+  if (order.estimatedPrice) return Number(order.estimatedPrice);
+  return getOrderItems(order).reduce(
+    (s, it) => s + (Number(it.totalPrice ?? it.total) || 0), 0);
+}
+
+function orderWallpaperLabel(order) {
+  const items = getOrderItems(order);
+  if (items.length === 0) return '—';
+  const first = items[0].wallpaperName || '—';
+  return items.length > 1 ? `${first} +${items.length - 1}` : first;
+}
+
 export default function OrdersPage() {
   const { shopId, currentUser, isAdmin } = useAuth();
   const { t } = useLanguage();
@@ -38,7 +84,6 @@ export default function OrdersPage() {
           status: activeTab === 'all' ? '' : activeTab,
           ...filters,
         }),
-        // For branches: if admin get all, else filter by shopId
         getDocs(query(collection(db, 'branches'), ...(isAdmin ? [] : [where('shopId', '==', shopId)]))),
       ]);
       setOrders(ordersData);
@@ -71,20 +116,33 @@ export default function OrdersPage() {
       ) : <span className="text-subtext">—</span>,
     },
     {
-      key: 'wallpaper', label: t('orders_wallpaper'), accessor: 'wallpaperName',
-      render: (v) => <span className="text-text-main text-sm">{v || '—'}</span>,
+      key: 'wallpaper', label: t('orders_wallpaper'), sortable: false,
+      render: (_, row) => (
+        <span className="text-text-main text-sm">{orderWallpaperLabel(row)}</span>
+      ),
     },
     {
-      key: 'rolls', label: t('orders_rolls_needed'), accessor: 'rollsNeeded',
-      render: (v) => <span className="text-subtext text-sm">{v || '—'}</span>,
+      key: 'rolls', label: t('orders_rolls_needed'), sortable: false,
+      render: (_, row) => {
+        const rolls = orderTotalRolls(row);
+        return <span className="text-subtext text-sm">{rolls > 0 ? rolls : '—'}</span>;
+      },
     },
     {
-      key: 'length', label: t('orders_length_needed'), accessor: 'lengthNeededM',
-      render: (v) => <span className="text-subtext text-sm">{v ? `${v}m` : '—'}</span>,
+      key: 'sqm', label: t('orders_total_sqm'), sortable: false,
+      render: (_, row) => {
+        const sqm = orderTotalSqm(row);
+        return <span className="text-subtext text-sm">{sqm > 0 ? `${sqm.toFixed(1)} ${t('common_sqm')}` : '—'}</span>;
+      },
     },
     {
-      key: 'price', label: t('orders_estimated_price'), accessor: 'estimatedPrice',
-      render: (v) => v ? <span className="text-primary font-semibold text-sm">{format(v)}</span> : <span className="text-subtext">—</span>,
+      key: 'price', label: t('orders_estimated_price'), sortable: false,
+      render: (_, row) => {
+        const total = orderTotalPrice(row);
+        return total > 0
+          ? <span className="text-primary font-semibold text-sm">{format(total)}</span>
+          : <span className="text-subtext">—</span>;
+      },
     },
     {
       key: 'date', label: t('orders_date'),
@@ -113,7 +171,7 @@ export default function OrdersPage() {
               onClick={() => handleStatusChange(row, 'negotiating')}
               className="px-2.5 py-1.5 text-xs rounded-lg bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 transition-all"
             >
-              Negotiate
+              {t('orders_negotiating')}
             </button>
           )}
           {row.status === 'negotiating' && (
@@ -121,7 +179,7 @@ export default function OrdersPage() {
               onClick={() => handleStatusChange(row, 'ready')}
               className="px-2.5 py-1.5 text-xs rounded-lg bg-purple-500/10 text-purple-400 hover:bg-purple-500/20 transition-all"
             >
-              Mark Ready
+              {t('orders_ready')}
             </button>
           )}
           {(row.status === 'ready' || row.status === 'negotiating') && (
@@ -151,7 +209,7 @@ export default function OrdersPage() {
                 : 'bg-card text-subtext hover:text-text-main border border-white/5 hover:border-white/10'
               }`}
           >
-            {t(`orders_${tab}` in t ? `orders_${tab}` : `orders_${tab}`) || tab}
+            {t(`orders_${tab}`)}
             {tab === 'all' ? ` (${orders.length})` : ''}
           </button>
         ))}
