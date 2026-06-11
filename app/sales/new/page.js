@@ -16,6 +16,32 @@ import { collection, getDocs, query, where, doc, getDoc } from 'firebase/firesto
 import { db } from '../../../lib/firebase';
 import toast from 'react-hot-toast';
 
+// ─────────────────────────────────────────────────────────────────────────
+// Mobile app orders carry an items[] array (one entry per scanned wall).
+// Several walls can use the SAME wallpaper — for the sale we merge those
+// into one line, summing sqm. Legacy flat-field orders still work.
+// ─────────────────────────────────────────────────────────────────────────
+function getOrderItemsMergedByWallpaper(order) {
+  let rawItems = [];
+  if (Array.isArray(order.items) && order.items.length > 0) {
+    rawItems = order.items;
+  } else if (order.wallpaperId) {
+    rawItems = [{
+      wallpaperId: order.wallpaperId,
+      sqm: order.totalSqm || 0,
+    }];
+  }
+
+  const merged = {};
+  for (const it of rawItems) {
+    const id = it.wallpaperId;
+    if (!id) continue;
+    if (!merged[id]) merged[id] = { wallpaperId: id, sqm: 0 };
+    merged[id].sqm += Number(it.sqm) || 0;
+  }
+  return Object.values(merged);
+}
+
 function NewSaleContent() {
   const { shopId, currentUser, userDoc } = useAuth();
   const { t } = useLanguage();
@@ -57,28 +83,46 @@ function NewSaleContent() {
         (shopData?.paymentTypes || [{ id: 'cash' }]).filter((p) => p.isActive).map((p) => [p.id, ''])
       ));
 
+      // ──────────────────────────────────────────────────────────────────
+      // Order → sale conversion. Reads the items[] array from mobile app
+      // orders (one entry per wall, merged by wallpaper). Rolls + prices
+      // are recomputed HERE with current dashboard data — the scanner's
+      // estimate is never trusted as the sale price (TZ: scanner ≠ sale).
+      // ──────────────────────────────────────────────────────────────────
       if (orderId) {
         const orderSnap = await getDoc(doc(db, 'orders', orderId));
         if (orderSnap.exists()) {
           const order = orderSnap.data();
-          if (order.wallpaperId && order.rollsNeeded) {
-            const wp = wps.find((w) => w.id === order.wallpaperId);
-            if (wp) {
-              setItems([{
-                wallpaperId: wp.id,
-                wallpaperName: wp.nameEn,
-                image: wp.images?.[0] || '',
-                sellPrice: wp.sellPrice,
-                costPrice: wp.costPrice,
-                rollWidthCm: wp.rollWidthCm,
-                rollLengthM: wp.rollLengthM,
-                stock: wp.stock,
-                sqm: order.totalSqm || 0,
-                rolls: order.rollsNeeded || 0,
-                lengthM: order.lengthNeededM || 0,
-                total: (order.rollsNeeded || 0) * wp.sellPrice,
-              }]);
-            }
+          const mergedItems = getOrderItemsMergedByWallpaper(order);
+          const prefilled = [];
+
+          for (const oi of mergedItems) {
+            const wp = wps.find((w) => w.id === oi.wallpaperId);
+            if (!wp) continue; // wallpaper deleted or belongs to other shop
+            const sqm = Number(oi.sqm) || 0;
+            if (sqm <= 0) continue;
+            const rolls = sqmToRolls(sqm, wp.rollWidthCm, wp.rollLengthM, 0);
+            const lengthM = sqmToLength(sqm, wp.rollWidthCm);
+            prefilled.push({
+              wallpaperId: wp.id,
+              wallpaperName: wp.nameEn || wp.nameUz,
+              image: wp.images?.[0] || '',
+              sellPrice: wp.sellPrice,
+              costPrice: wp.costPrice,
+              rollWidthCm: wp.rollWidthCm,
+              rollLengthM: wp.rollLengthM,
+              stock: wp.stock,
+              sqm,
+              rolls,
+              lengthM,
+              total: rolls * wp.sellPrice,
+            });
+          }
+
+          if (prefilled.length > 0) {
+            setItems(prefilled);
+          } else if (mergedItems.length > 0) {
+            toast.error(t('common_no_results'));
           }
         }
       }
@@ -94,7 +138,7 @@ function NewSaleContent() {
 
   const addItem = (wp) => {
     if (items.find((i) => i.wallpaperId === wp.id)) {
-      toast.error('Already added');
+      toast.error(t('common_error'));
       setSearchOpen(false);
       return;
     }
@@ -245,7 +289,7 @@ function NewSaleContent() {
                         </div>
                       </div>
                       <p className="text-xs text-subtext mt-2">
-                        Stock: {item.stock} rolls · {format(item.sellPrice)}/roll
+                        {item.stock} {t('common_rolls')} · {format(item.sellPrice)}/{t('common_rolls')}
                       </p>
                     </div>
                   </div>
@@ -282,9 +326,9 @@ function NewSaleContent() {
               <div>
                 <label className="block text-sm font-medium text-text-main mb-1.5">{t('sales_craftsman')}</label>
                 <select value={craftsmanId} onChange={(e) => setCraftsmanId(e.target.value)}>
-                  <option value="">Select craftsman...</option>
+                  <option value="">{t('sales_craftsman')}...</option>
                   {craftsmen.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name} — {format(c.pendingBalance || 0)} pending</option>
+                    <option key={c.id} value={c.id}>{c.name} — {format(c.pendingBalance || 0)}</option>
                   ))}
                 </select>
               </div>
@@ -336,7 +380,6 @@ function NewSaleContent() {
               <p className="text-subtext text-sm">{t('sales_remaining')}</p>
               <p className={`font-bold text-lg ${remaining === 0 ? 'text-success' : 'text-error'}`}>
                 {format(Math.abs(remaining))}
-                {remaining !== 0 && (remaining > 0 ? ' short' : ' over')}
               </p>
             </div>
           </div>
@@ -396,9 +439,9 @@ function NewSaleContent() {
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-text-main font-medium truncate">{wp.nameEn || wp.nameUz}</p>
-                      <p className="text-subtext text-xs">{wp.stock} rolls in stock</p>
+                      <p className="text-subtext text-xs">{wp.stock} {t('common_rolls')}</p>
                     </div>
-                    <span className="text-primary font-semibold text-sm flex-shrink-0">{format(wp.sellPrice)}/roll</span>
+                    <span className="text-primary font-semibold text-sm flex-shrink-0">{format(wp.sellPrice)}/{t('common_rolls')}</span>
                   </button>
                 ))
               )}
@@ -412,7 +455,7 @@ function NewSaleContent() {
         onClose={() => setCloseConfirm(false)}
         onConfirm={handleClose}
         title={t('sales_close_receipt')}
-        message={`${t('sales_close_confirm')} Total: ${format(totalAmount)}`}
+        message={`${t('sales_close_confirm')} ${t('common_total')}: ${format(totalAmount)}`}
         loading={closing}
         confirmText={t('sales_close_receipt')}
       />
