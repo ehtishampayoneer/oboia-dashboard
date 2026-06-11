@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { ArrowLeft, Phone, ChevronRight } from 'lucide-react';
+import { ArrowLeft, Phone } from 'lucide-react';
 import Layout from '../../../components/Layout';
 import StatusBadge from '../../../components/StatusBadge';
 import ConfirmModal from '../../../components/ConfirmModal';
@@ -14,6 +14,13 @@ import { calculateWallpaper } from '../../../lib/calculations';
 import toast from 'react-hot-toast';
 
 const STATUS_FLOW = ['pending', 'negotiating', 'ready', 'closed'];
+
+// ─────────────────────────────────────────────────────────────────────────
+// Mobile app orders carry an items[] array — one entry per scanned wall,
+// with wallpaperId/Name, wallWidth/Height, sqm, rollsNeeded, pricePerRoll,
+// totalPrice. Older orders may instead have a walls[] array + flat fields.
+// This page renders whichever shape the order has.
+// ─────────────────────────────────────────────────────────────────────────
 
 export default function OrderDetailPage() {
   const { id } = useParams();
@@ -41,6 +48,7 @@ export default function OrderDetailPage() {
 
   useEffect(() => { if (id) fetchOrder(); }, [id]);
 
+  // Legacy walls[] calculation (older order format only)
   const calc = order?.walls
     ? calculateWallpaper(
         order.walls,
@@ -49,6 +57,14 @@ export default function OrderDetailPage() {
         order.wallpaperPrice || 0
       )
     : null;
+
+  // Mobile app items[] totals
+  const items = Array.isArray(order?.items) ? order.items : [];
+  const itemsTotalSqm = items.reduce((s, it) => s + (Number(it.sqm) || 0), 0);
+  const itemsTotalRolls = items.reduce((s, it) => s + (Number(it.rollsNeeded) || 0), 0);
+  const itemsTotalPrice = order?.totalAmount
+    ? Number(order.totalAmount)
+    : items.reduce((s, it) => s + (Number(it.totalPrice) || 0), 0);
 
   const handleStatusChange = async (newStatus) => {
     setStatusLoading(true);
@@ -64,7 +80,7 @@ export default function OrderDetailPage() {
   };
 
   const handleCancel = async () => {
-    if (!cancelReason.trim()) { toast.error('Reason required'); return; }
+    if (!cancelReason.trim()) { toast.error(t('common_required')); return; }
     setCancelling(true);
     try {
       await cancelOrder(id, cancelReason, currentUser.uid);
@@ -89,17 +105,17 @@ export default function OrderDetailPage() {
   }
 
   if (!order) {
-    return <Layout title="Order Not Found"><p className="text-subtext p-6">Order not found.</p></Layout>;
+    return <Layout title={t('orders_title')}><p className="text-subtext p-6">{t('common_no_results')}</p></Layout>;
   }
 
   const currentStatusIdx = STATUS_FLOW.indexOf(order.status);
 
   return (
-    <Layout title={`Order — ${order.customerPhone || id}`}>
+    <Layout title={`${t('orders_title')} — ${order.customerPhone || id}`}>
       <div className="max-w-3xl mx-auto space-y-5">
         <div className="flex items-center justify-between flex-wrap gap-3">
           <button onClick={() => router.back()} className="flex items-center gap-2 text-subtext hover:text-text-main text-sm">
-            <ArrowLeft size={16} /> Back
+            <ArrowLeft size={16} /> {t('common_close')}
           </button>
           <div className="flex items-center gap-2">
             {order.status !== 'cancelled' && order.status !== 'closed' && (
@@ -110,7 +126,7 @@ export default function OrderDetailPage() {
                     disabled={statusLoading}
                     className="px-3 py-2 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 rounded-lg text-sm transition-all disabled:opacity-50"
                   >
-                    → {STATUS_FLOW[currentStatusIdx + 1]}
+                    → {t(`orders_${STATUS_FLOW[currentStatusIdx + 1]}`)}
                   </button>
                 )}
                 {(order.status === 'ready' || order.status === 'negotiating') && (
@@ -148,19 +164,90 @@ export default function OrderDetailPage() {
             </div>
             <StatusBadge status={order.status} size="sm" />
           </div>
-          <div className="grid grid-cols-2 gap-3 mt-4 text-sm">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-4 text-sm">
+            <div>
+              <p className="text-subtext text-xs">{t('common_name')}</p>
+              <p className="text-text-main">{order.customerName || '—'}</p>
+            </div>
             <div>
               <p className="text-subtext text-xs">{t('orders_date')}</p>
               <p className="text-text-main">{order.createdAt?.toDate?.()?.toLocaleString() || '—'}</p>
             </div>
-            <div>
-              <p className="text-subtext text-xs">{t('orders_wallpaper')}</p>
-              <p className="text-text-main">{order.wallpaperName || '—'}</p>
+            <div className="sm:col-span-2">
+              <p className="text-subtext text-xs">{t('common_address')}</p>
+              <p className="text-text-main">{order.customerAddress || '—'}</p>
             </div>
+            {order.notes && (
+              <div className="sm:col-span-2">
+                <p className="text-subtext text-xs">{t('common_notes')}</p>
+                <p className="text-text-main">{order.notes}</p>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Wall measurements */}
+        {/* Mobile-app order items (one row per scanned wall) */}
+        {items.length > 0 && (
+          <div className="bg-card border border-white/5 rounded-xl overflow-hidden">
+            <div className="px-5 py-3 border-b border-white/5">
+              <h2 className="text-text-main font-semibold text-sm">{t('sales_items')}</h2>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-white/5">
+                    <th className="px-4 py-2.5 text-left text-xs text-subtext font-semibold">{t('orders_wallpaper')}</th>
+                    <th className="px-4 py-2.5 text-right text-xs text-subtext font-semibold">{t('orders_wall_width')}</th>
+                    <th className="px-4 py-2.5 text-right text-xs text-subtext font-semibold">{t('orders_wall_height')}</th>
+                    <th className="px-4 py-2.5 text-right text-xs text-subtext font-semibold">{t('sales_sqm')}</th>
+                    <th className="px-4 py-2.5 text-right text-xs text-subtext font-semibold">{t('orders_rolls_needed')}</th>
+                    <th className="px-4 py-2.5 text-right text-xs text-subtext font-semibold">{t('common_total')}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {items.map((it, i) => (
+                    <tr key={i}>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          {it.wallpaperThumbnail ? (
+                            <div className="w-8 h-8 rounded-lg overflow-hidden bg-surface flex-shrink-0">
+                              <img src={it.wallpaperThumbnail} alt="" className="w-full h-full object-cover" />
+                            </div>
+                          ) : null}
+                          <span className="text-text-main">{it.wallpaperName || '—'}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-right text-text-main">
+                        {it.wallWidth ? `${Number(it.wallWidth).toFixed(2)}${t('common_meters')}` : '—'}
+                      </td>
+                      <td className="px-4 py-3 text-right text-text-main">
+                        {it.wallHeight ? `${Number(it.wallHeight).toFixed(2)}${t('common_meters')}` : '—'}
+                      </td>
+                      <td className="px-4 py-3 text-right text-text-main">{(Number(it.sqm) || 0).toFixed(2)}</td>
+                      <td className="px-4 py-3 text-right text-text-main">{Number(it.rollsNeeded) || 0}</td>
+                      <td className="px-4 py-3 text-right text-primary font-medium">{format(Number(it.totalPrice) || 0)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t border-primary/20 bg-primary/5">
+                    <td colSpan={3} className="px-4 py-3 text-text-main font-semibold text-sm">{t('common_total')}</td>
+                    <td className="px-4 py-3 text-right text-text-main font-semibold">{itemsTotalSqm.toFixed(2)}</td>
+                    <td className="px-4 py-3 text-right text-text-main font-semibold">{itemsTotalRolls}</td>
+                    <td className="px-4 py-3 text-right text-primary font-bold">{format(itemsTotalPrice)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+            <div className="px-5 py-3 border-t border-white/5">
+              <p className="text-subtext text-xs">
+                {t('orders_estimated_price')} — {t('sales_close_warning')}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Legacy walls[] table (older order format) */}
         {order.walls && order.walls.length > 0 && (
           <div className="bg-card border border-white/5 rounded-xl overflow-hidden">
             <div className="px-5 py-3 border-b border-white/5">
@@ -170,7 +257,7 @@ export default function OrderDetailPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-white/5">
-                    <th className="px-4 py-2.5 text-left text-xs text-subtext font-semibold">Wall</th>
+                    <th className="px-4 py-2.5 text-left text-xs text-subtext font-semibold">{t('orders_wall_measurements')}</th>
                     <th className="px-4 py-2.5 text-right text-xs text-subtext font-semibold">{t('orders_wall_width')}</th>
                     <th className="px-4 py-2.5 text-right text-xs text-subtext font-semibold">{t('orders_wall_height')}</th>
                     <th className="px-4 py-2.5 text-right text-xs text-subtext font-semibold">{t('orders_wall_sqm')}</th>
@@ -185,9 +272,9 @@ export default function OrderDetailPage() {
                     const net = gross - dedSqm;
                     return (
                       <tr key={i}>
-                        <td className="px-4 py-3 text-subtext">Wall {i + 1}</td>
-                        <td className="px-4 py-3 text-right text-text-main">{wall.widthM}m</td>
-                        <td className="px-4 py-3 text-right text-text-main">{wall.heightM}m</td>
+                        <td className="px-4 py-3 text-subtext">{i + 1}</td>
+                        <td className="px-4 py-3 text-right text-text-main">{wall.widthM}{t('common_meters')}</td>
+                        <td className="px-4 py-3 text-right text-text-main">{wall.heightM}{t('common_meters')}</td>
                         <td className="px-4 py-3 text-right text-text-main">{gross.toFixed(2)}</td>
                         <td className="px-4 py-3 text-right text-error">{dedSqm > 0 ? `-${dedSqm.toFixed(2)}` : '—'}</td>
                         <td className="px-4 py-3 text-right text-primary font-medium">{net.toFixed(2)}</td>
@@ -198,7 +285,7 @@ export default function OrderDetailPage() {
                 {calc && (
                   <tfoot>
                     <tr className="border-t border-primary/20 bg-primary/5">
-                      <td colSpan={3} className="px-4 py-3 text-text-main font-semibold text-sm">Totals</td>
+                      <td colSpan={3} className="px-4 py-3 text-text-main font-semibold text-sm">{t('common_total')}</td>
                       <td className="px-4 py-3 text-right text-text-main font-semibold">{calc.totalGrossSqm}</td>
                       <td className="px-4 py-3 text-right text-error font-semibold">-{calc.totalDeductionSqm}</td>
                       <td className="px-4 py-3 text-right text-primary font-bold">{calc.netSqm}</td>
@@ -207,9 +294,9 @@ export default function OrderDetailPage() {
                       <td colSpan={6} className="px-4 py-3">
                         <div className="flex flex-wrap gap-4 text-sm">
                           <div><span className="text-subtext">{t('orders_total_rolls')}: </span><span className="text-text-main font-semibold">{calc.rollsNeeded}</span></div>
-                          <div><span className="text-subtext">{t('orders_total_length')}: </span><span className="text-text-main font-semibold">{calc.lengthNeededM}m</span></div>
-                          <div><span className="text-subtext">{t('orders_roll_width')}: </span><span className="text-text-main font-semibold">{calc.rollWidthM}m</span></div>
-                          <div><span className="text-subtext">Est. Price: </span><span className="text-primary font-bold">{format(calc.totalPrice)}</span></div>
+                          <div><span className="text-subtext">{t('orders_total_length')}: </span><span className="text-text-main font-semibold">{calc.lengthNeededM}{t('common_meters')}</span></div>
+                          <div><span className="text-subtext">{t('orders_roll_width')}: </span><span className="text-text-main font-semibold">{calc.rollWidthM}{t('common_meters')}</span></div>
+                          <div><span className="text-subtext">{t('orders_estimated_price')}: </span><span className="text-primary font-bold">{format(calc.totalPrice)}</span></div>
                         </div>
                       </td>
                     </tr>
@@ -265,7 +352,7 @@ export default function OrderDetailPage() {
                 rows={3}
                 value={cancelReason}
                 onChange={(e) => setCancelReason(e.target.value)}
-                placeholder="Enter reason..."
+                placeholder={t('common_reason')}
                 className="resize-none"
               />
             </div>
