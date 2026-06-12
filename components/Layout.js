@@ -12,7 +12,7 @@ import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useCurrency } from '../context/CurrencyContext';
 import { logout } from '../lib/auth';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, getDocs } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import toast from 'react-hot-toast';
 
@@ -35,13 +35,14 @@ const NAV_ITEMS = [
 export default function Layout({ children, title }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { userDoc, isAdmin, shopId } = useAuth();
+  const { userDoc, isAdmin, shopId, baseShopId, shopOverride, setShopOverride } = useAuth();
   const { t, currentLang, toggleLanguage } = useLanguage();
   const { currentCurrency, toggleCurrency } = useCurrency();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [notifOpen, setNotifOpen] = useState(false);
+  const [allShops, setAllShops] = useState([]);
   const notifRef = useRef(null);
 
   useEffect(() => {
@@ -54,7 +55,26 @@ export default function Layout({ children, title }) {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Real-time notifications: pending orders count
+  // ── Admin shop switcher: load the full shop list once for the dropdown.
+  useEffect(() => {
+    if (!isAdmin) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const snap = await getDocs(collection(db, 'shops'));
+        if (cancelled) return;
+        const shops = snap.docs
+          .map((d) => ({ id: d.id, name: d.data().nameEn || d.data().nameUz || d.data().name || d.id }))
+          .sort((a, b) => a.name.localeCompare(b.name));
+        setAllShops(shops);
+      } catch (e) {
+        console.error('shop switcher load failed', e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isAdmin]);
+
+  // Real-time notifications: pending orders count (follows the selected shop)
   useEffect(() => {
     if (!shopId) return;
     const q = query(
@@ -175,7 +195,7 @@ export default function Layout({ children, title }) {
         {/* Header */}
         <header className="h-16 flex items-center justify-between px-4 md:px-6
           bg-dark border-b border-white/5 flex-shrink-0 gap-3">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 min-w-0">
             <button
               onClick={() => setMobileOpen(true)}
               className="md:hidden text-subtext hover:text-text-main"
@@ -186,6 +206,30 @@ export default function Layout({ children, title }) {
           </div>
 
           <div className="flex items-center gap-2">
+            {/* ── Admin shop switcher: every page (wallpapers, categories,
+                 warehouse, sales...) operates on the selected shop. ── */}
+            {isAdmin && allShops.length > 0 && (
+              <div className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-surface
+                border border-primary/30">
+                <Store size={13} className="text-primary flex-shrink-0" />
+                <select
+                  value={shopOverride || ''}
+                  onChange={(e) => setShopOverride(e.target.value || null)}
+                  className="bg-transparent border-0 p-0 pr-5 text-xs font-semibold
+                    text-primary focus:ring-0 cursor-pointer max-w-[130px] truncate"
+                >
+                  <option value="" className="bg-card text-text-main">
+                    {currentLang === 'uz' ? 'Mening do\'konim' : 'My shop'}
+                  </option>
+                  {allShops.map((s) => (
+                    <option key={s.id} value={s.id} className="bg-card text-text-main">
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             {/* Language toggle */}
             <button
               onClick={toggleLanguage}
