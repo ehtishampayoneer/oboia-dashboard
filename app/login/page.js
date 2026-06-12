@@ -4,6 +4,8 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useForm } from 'react-hook-form';
 import { Eye, EyeOff, AlertCircle } from 'lucide-react';
+import { sendPasswordResetEmail } from 'firebase/auth';
+import { auth } from '../../lib/firebase';
 import { loginWithToken } from '../../lib/auth';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
@@ -16,8 +18,9 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [resetting, setResetting] = useState(false);
 
-  const { register, handleSubmit, formState: { errors } } = useForm();
+  const { register, handleSubmit, getValues, formState: { errors } } = useForm();
 
   useEffect(() => {
     if (!loading && currentUser) {
@@ -40,10 +43,40 @@ export default function LoginPage() {
         SHOP_INACTIVE: 'This shop is currently inactive.',
         WRONG_CREDENTIALS: 'Incorrect email or password.',
         USER_BLOCKED: 'Your account has been blocked. Contact admin.',
-        USER_NOT_FOUND: 'Incorrect email or password.',
+        // Distinct from wrong password: the login itself worked, but this
+        // account has no shop profile linked (e.g. old manually-created
+        // accounts). The fix is signing up properly or contacting admin —
+        // NOT resetting the password again.
+        USER_NOT_FOUND: 'Your password is correct, but this account is not linked to a shop yet. Please sign up as a seller, or contact the OBOIA admin.',
       };
       setErrorMsg(map[err.message] || 'Something went wrong. Please try again.');
       setSubmitting(false);
+    }
+  };
+
+  // ── Forgot password: sends a Firebase reset email to the address typed
+  //    in the email field. Works for shopkeepers AND admin.
+  const handleForgotPassword = async () => {
+    const email = (getValues('email') || '').trim();
+    if (!email) {
+      toast.error(currentLang === 'uz'
+        ? 'Avval email manzilingizni kiriting'
+        : 'Enter your email address first');
+      return;
+    }
+    setResetting(true);
+    try {
+      await sendPasswordResetEmail(auth, email);
+      toast.success(currentLang === 'uz'
+        ? `Parolni tiklash havolasi ${email} manziliga yuborildi`
+        : `Password reset link sent to ${email}`);
+    } catch (err) {
+      // Don't reveal whether the email exists — generic success-style message
+      toast.success(currentLang === 'uz'
+        ? 'Agar bu email ro\'yxatdan o\'tgan bo\'lsa, tiklash havolasi yuborildi'
+        : 'If this email is registered, a reset link has been sent');
+    } finally {
+      setResetting(false);
     }
   };
 
@@ -143,6 +176,7 @@ export default function LoginPage() {
               <input
                 type="email"
                 placeholder="your@email.com"
+                autoComplete="email"
                 {...register('email', {
                   required: 'Email is required',
                   pattern: { value: /^\S+@\S+\.\S+$/, message: 'Invalid email address' },
@@ -166,6 +200,7 @@ export default function LoginPage() {
                 <input
                   type={showPassword ? 'text' : 'password'}
                   placeholder="Enter your password"
+                  autoComplete="current-password"
                   {...register('password', { required: 'Password is required' })}
                   className="w-full pl-4 pr-10"
                 />
@@ -183,6 +218,19 @@ export default function LoginPage() {
                   {errors.password.message}
                 </p>
               )}
+              {/* Forgot password link */}
+              <div className="flex justify-end mt-1.5">
+                <button
+                  type="button"
+                  onClick={handleForgotPassword}
+                  disabled={resetting}
+                  className="text-xs text-primary hover:underline disabled:opacity-50"
+                >
+                  {resetting
+                    ? (currentLang === 'uz' ? 'Yuborilmoqda...' : 'Sending...')
+                    : (currentLang === 'uz' ? 'Parolni unutdingizmi?' : 'Forgot password?')}
+                </button>
+              </div>
             </div>
 
             {/* Error message */}
@@ -211,6 +259,18 @@ export default function LoginPage() {
                 'Sign In to OBOIA'
               )}
             </button>
+
+            {/* Become a seller */}
+            <p className="text-center text-subtext text-sm pt-3 border-t border-white/5 mt-4">
+              {currentLang === 'uz' ? 'OBOIA\'da sotmoqchimisiz?' : 'Want to sell on OBOIA?'}{' '}
+              <button
+                type="button"
+                onClick={() => router.push('/signup')}
+                className="text-primary hover:underline font-semibold"
+              >
+                {currentLang === 'uz' ? 'Sotuvchi bo\'ling' : 'Become a seller'}
+              </button>
+            </p>
           </form>
         </div>
 
