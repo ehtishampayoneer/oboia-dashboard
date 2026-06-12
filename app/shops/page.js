@@ -7,7 +7,7 @@ import {
 import { sendPasswordResetEmail } from 'firebase/auth';
 import {
   Plus, Eye, EyeOff, Copy, RefreshCw, ToggleLeft, ToggleRight,
-  Calendar, AlertCircle, Clock, Trash2, Check, X, KeyRound, Inbox, Phone,
+  Calendar, AlertCircle, Clock, Trash2, Check, X, KeyRound, Inbox, Phone, Pencil,
 } from 'lucide-react';
 import Layout from '../../components/Layout';
 import DataTable from '../../components/DataTable';
@@ -29,12 +29,11 @@ const SUB_DEFAULTS = {
   graceDays: 5,
 };
 
-// Bilingual strings for the NEW signup-request features (local, so the big
-// lib/i18n.js stays untouched; can be merged there post-launch).
+// Bilingual strings for the newer features (local, so the big lib/i18n.js
+// stays untouched; can be merged there post-launch).
 const REQ_STRINGS = {
   en: {
     requests_title: 'Pending Seller Requests',
-    requests_empty: 'No pending requests',
     approve: 'Approve',
     reject: 'Reject',
     approved_toast: 'Approved! Token: {token} — send it to the seller after payment.',
@@ -42,10 +41,12 @@ const REQ_STRINGS = {
     reset_pw: 'Reset password',
     reset_sent: 'Password reset email sent to {email}',
     requested: 'Requested',
+    edit: 'Edit',
+    edit_shop: 'Edit Shop',
+    edit_saved: 'Shop updated',
   },
   uz: {
     requests_title: 'Kutilayotgan sotuvchi so\'rovlari',
-    requests_empty: 'Kutilayotgan so\'rovlar yo\'q',
     approve: 'Tasdiqlash',
     reject: 'Rad etish',
     approved_toast: 'Tasdiqlandi! Token: {token} — to\'lovdan keyin sotuvchiga yuboring.',
@@ -53,6 +54,9 @@ const REQ_STRINGS = {
     reset_pw: 'Parolni tiklash',
     reset_sent: 'Parolni tiklash xati {email} manziliga yuborildi',
     requested: 'So\'ralgan sana',
+    edit: 'Tahrirlash',
+    edit_shop: 'Do\'konni tahrirlash',
+    edit_saved: 'Do\'kon yangilandi',
   },
 };
 
@@ -129,6 +133,9 @@ export default function ShopsPage() {
   const [extending, setExtending] = useState(false);
   const [deleteModal, setDeleteModal] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const [editModal, setEditModal] = useState(null);
+  const [editForm, setEditForm] = useState({ nameUz: '', nameEn: '' });
+  const [editSaving, setEditSaving] = useState(false);
   const [actionRequestId, setActionRequestId] = useState(null);
   const [revealedTokens, setRevealedTokens] = useState({});
   const [form, setForm] = useState({
@@ -182,7 +189,7 @@ export default function ShopsPage() {
     const expiresAt = new Date(now.getTime() + SUB_DEFAULTS.durationDays * 86400000);
 
     const shopRef = await addDoc(collection(db, 'shops'), {
-      name: nameEn || nameUz,            // ★ NEW: legacy display field
+      name: nameEn || nameUz,            // legacy display field
       nameUz,
       nameEn,
       sellerEmail,
@@ -296,7 +303,40 @@ export default function ShopsPage() {
   };
 
   // ──────────────────────────────────────────────────────────────────────
-  // Manual create (admin-driven, still available)
+  // EDIT shop names (keeps name/nameUz/nameEn in sync everywhere)
+  // ──────────────────────────────────────────────────────────────────────
+  const openEditModal = (shop) => {
+    setEditForm({ nameUz: shop.nameUz || '', nameEn: shop.nameEn || '' });
+    setEditModal(shop);
+  };
+
+  const handleEditShop = async () => {
+    if (!editModal) return;
+    if (!editForm.nameUz && !editForm.nameEn) {
+      toast.error(t('shops_name_required'));
+      return;
+    }
+    setEditSaving(true);
+    try {
+      await updateDoc(doc(db, 'shops', editModal.id), {
+        name: editForm.nameEn || editForm.nameUz,
+        nameUz: editForm.nameUz,
+        nameEn: editForm.nameEn,
+        updatedBy: currentUser?.uid,
+        updatedAt: serverTimestamp(),
+      });
+      toast.success(R.edit_saved);
+      setEditModal(null);
+      fetchShops();
+    } catch (e) {
+      toast.error(t('common_error'));
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Manual create (admin-driven; prefer the /signup flow for real sellers)
   // ──────────────────────────────────────────────────────────────────────
   const handleCreate = async () => {
     if (busyRef.current) return;
@@ -406,9 +446,6 @@ export default function ShopsPage() {
     setExtendModal(shop);
   };
 
-  // ──────────────────────────────────────────────────────────────────────
-  // Delete shop (admin cleanup for duplicates / mistakes)
-  // ──────────────────────────────────────────────────────────────────────
   const handleDelete = async () => {
     if (!deleteModal) return;
     setDeleting(true);
@@ -511,6 +548,15 @@ export default function ShopsPage() {
       key: 'actions', label: t('common_actions'), sortable: false,
       render: (_, row) => (
         <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={() => openEditModal(row)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
+              bg-white/5 text-text-main hover:bg-white/10 transition-all"
+            title={R.edit}
+          >
+            <Pencil size={14} />
+            {R.edit}
+          </button>
           <button
             onClick={() => openExtendModal(row)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
@@ -633,6 +679,45 @@ export default function ShopsPage() {
           </button>
         }
       />
+
+      {/* Edit Shop Modal */}
+      {editModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="w-full max-w-md bg-card border border-white/10 rounded-2xl shadow-card animate-slide-up">
+            <div className="flex items-center justify-between p-6 border-b border-white/5">
+              <h2 className="text-text-main font-bold text-lg">{R.edit_shop}</h2>
+              <button onClick={() => setEditModal(null)} className="text-subtext hover:text-text-main">✕</button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-text-main mb-1.5">{t('shops_name_uz')}</label>
+                <input type="text" value={editForm.nameUz}
+                  onChange={(e) => setEditForm((f) => ({ ...f, nameUz: e.target.value }))} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-text-main mb-1.5">{t('shops_name_en')}</label>
+                <input type="text" value={editForm.nameEn}
+                  onChange={(e) => setEditForm((f) => ({ ...f, nameEn: e.target.value }))} />
+              </div>
+              <p className="text-xs text-subtext">
+                {editModal.sellerEmail} · {editModal.token}
+              </p>
+            </div>
+            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-white/5">
+              <button onClick={() => setEditModal(null)} className="px-4 py-2 text-sm text-subtext hover:text-text-main border border-white/10 rounded-lg">
+                {t('common_cancel')}
+              </button>
+              <button
+                onClick={handleEditShop}
+                disabled={editSaving}
+                className="px-5 py-2 bg-primary hover:bg-secondary text-dark font-bold text-sm rounded-lg transition-all disabled:opacity-50"
+              >
+                {editSaving ? t('common_loading') : t('common_save')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Create Shop Modal */}
       {showModal && (
