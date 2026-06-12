@@ -143,19 +143,25 @@ export default function ShopsPage() {
 
   const fetchShops = async () => {
     setLoading(true);
+    // Shops and signup requests load INDEPENDENTLY — a permission problem
+    // on one collection must never blank the other.
     try {
-      const [shopSnap, reqSnap] = await Promise.all([
-        getDocs(collection(db, 'shops')),
-        getDocs(query(collection(db, 'signupRequests'), where('status', '==', 'pending'))),
-      ]);
+      const shopSnap = await getDocs(collection(db, 'shops'));
       setShops(shopSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    } catch (e) {
+      console.error('shops read failed', e);
+      toast.error(t('common_error'));
+    }
+    try {
+      const reqSnap = await getDocs(
+        query(collection(db, 'signupRequests'), where('status', '==', 'pending'))
+      );
       setRequests(reqSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
     } catch (e) {
-      console.error(e);
-      toast.error(t('common_error'));
-    } finally {
-      setLoading(false);
+      console.error('signupRequests read failed', e);
+      setRequests([]);
     }
+    setLoading(false);
   };
 
   useEffect(() => { fetchShops(); }, []);
