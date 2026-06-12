@@ -14,11 +14,63 @@ import { collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../../../lib/firebase';
 import toast from 'react-hot-toast';
 
+// ─────────────────────────────────────────────────────────────────────────
+// ★ FOCUS-BUG FIX: These helper components MUST live at module level.
+// When they were defined inside the page component, every keystroke
+// re-created them as brand-new component types, forcing React to unmount
+// and remount the <input> — which is why typing one letter kicked the
+// cursor out of the field. At module level their identity is stable, so
+// inputs keep focus while typing.
+// ─────────────────────────────────────────────────────────────────────────
+const TabBtn = ({ label, active, onClick }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors
+      ${active ? 'bg-surface text-primary border border-white/10 border-b-surface' : 'text-subtext hover:text-text-main'}`}
+  >
+    {label}
+  </button>
+);
+
+const Field = ({ label, children, hint, error }) => (
+  <div>
+    <label className="block text-sm font-medium text-text-main mb-1.5">{label}</label>
+    {children}
+    {error ? (
+      <p className="text-error text-xs mt-1 flex items-center gap-1">
+        <AlertTriangle size={12} />
+        {error}
+      </p>
+    ) : (
+      hint && <p className="text-subtext text-xs mt-1">{hint}</p>
+    )}
+  </div>
+);
+
+const ARChip = ({ arReadiness }) => (
+  <div
+    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium
+      ${arReadiness.ready
+        ? 'bg-green-500/10 text-success border border-green-500/20'
+        : 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/20'}`}
+  >
+    {arReadiness.ready ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}
+    <span>{arReadiness.label}</span>
+  </div>
+);
+
 export default function AddWallpaperPage() {
-  const { shopId, currentUser, isAdmin } = useAuth();
-  const { t } = useLanguage();
+  const { shopId, shopOverride, currentUser, isAdmin } = useAuth();
+  const { t, currentLang } = useLanguage();
   const { exchangeRate } = useCurrency();
   const router = useRouter();
+
+  // ── Which shop receives this wallpaper?
+  // Shopkeeper: their own shop. Admin: the shop opened via the Shops page /
+  // header switcher. Without an opened shop, the form is blocked — this is
+  // what makes "wallpapers/null/..." uploads impossible.
+  const effectiveShopId = isAdmin ? (shopOverride || null) : shopId;
 
   const [categories, setCategories] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
@@ -27,7 +79,7 @@ export default function AddWallpaperPage() {
   const [images, setImages] = useState([]);
   const [arTexture, setArTexture] = useState('');
   const [saving, setSaving] = useState(false);
-  const [touched, setTouched] = useState(false); // CHANGED: track first save attempt for inline errors
+  const [touched, setTouched] = useState(false);
 
   const [form, setForm] = useState({
     nameUz: '', nameEn: '', descriptionUz: '', descriptionEn: '',
@@ -43,19 +95,19 @@ export default function AddWallpaperPage() {
   const costUSD = form.costPrice ? convertToUSD(Number(form.costPrice), exchangeRate).toFixed(2) : '0.00';
 
   useEffect(() => {
-    if (!shopId) return;
+    if (!effectiveShopId) return;
     Promise.all([
-      getDocs(query(collection(db, 'categories'), where('shopId', '==', shopId))),
-      getDocs(query(collection(db, 'suppliers'), where('shopId', '==', shopId))),
+      getDocs(query(collection(db, 'categories'), where('shopId', '==', effectiveShopId))),
+      getDocs(query(collection(db, 'suppliers'), where('shopId', '==', effectiveShopId))),
     ]).then(([cats, sups]) => {
       setCategories(cats.docs.map((d) => ({ id: d.id, ...d.data() })));
       setSuppliers(sups.docs.map((d) => ({ id: d.id, ...d.data() })));
     });
-  }, [shopId]);
+  }, [effectiveShopId]);
 
   const set = (key, val) => setForm((f) => ({ ...f, [key]: val }));
 
-  // ── CHANGED: Centralized validation. Returns array of human-readable errors.
+  // Centralized validation. Returns array of human-readable errors.
   const validationErrors = useMemo(() => {
     const errs = [];
     if (!form.nameUz.trim()) errs.push({ key: 'nameUz', msg: 'Name (Uzbek) is required' });
@@ -72,7 +124,7 @@ export default function AddWallpaperPage() {
     if (Number(form.rollLengthM) <= 0) {
       errs.push({ key: 'rollLengthM', msg: 'Roll length must be greater than 0 m' });
     }
-    // CHANGED: Image validation — at least ONE image OR AR texture must exist
+    // Image validation — at least ONE image OR AR texture must exist
     if (images.length === 0 && !arTexture) {
       errs.push({
         key: 'images',
@@ -82,7 +134,7 @@ export default function AddWallpaperPage() {
     return errs;
   }, [form, images, arTexture]);
 
-  // CHANGED: AR readiness — what will actually be sent to mobile app
+  // AR readiness — what will actually be sent to mobile app
   const arReadiness = useMemo(() => {
     const hasArTexture = !!arTexture;
     const hasImage = images.length > 0;
@@ -101,10 +153,10 @@ export default function AddWallpaperPage() {
   };
 
   const handleSave = async () => {
+    if (!effectiveShopId) return;
     setTouched(true);
     if (validationErrors.length > 0) {
       toast.error(validationErrors[0].msg);
-      // Scroll to top so user sees the validation banner
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
@@ -112,10 +164,9 @@ export default function AddWallpaperPage() {
     setSaving(true);
     try {
       await addWallpaper(
-        shopId,
+        effectiveShopId,
         {
           ...form,
-          // CHANGED: Pass numbers cleanly; data layer handles cm→m conversion
           sellPrice: Number(form.sellPrice),
           costPrice: Number(form.costPrice),
           rollWidthCm: Number(form.rollWidthCm),
@@ -133,52 +184,37 @@ export default function AddWallpaperPage() {
       toast.success(t('wallpapers_add_success'));
       router.push('/wallpapers');
     } catch (e) {
-      // CHANGED: Show actual error from data layer (includes albedo validation)
       toast.error(e?.message || t('common_error'));
     } finally {
       setSaving(false);
     }
   };
 
-  const TabBtn = ({ id, label, active, onClick }) => (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors
-        ${active ? 'bg-surface text-primary border border-white/10 border-b-surface' : 'text-subtext hover:text-text-main'}`}
-    >
-      {label}
-    </button>
-  );
-
-  // CHANGED: Field helper now shows inline validation error
-  const Field = ({ label, children, hint, error }) => (
-    <div>
-      <label className="block text-sm font-medium text-text-main mb-1.5">{label}</label>
-      {children}
-      {error ? (
-        <p className="text-error text-xs mt-1 flex items-center gap-1">
-          <AlertTriangle size={12} />
-          {error}
-        </p>
-      ) : (
-        hint && <p className="text-subtext text-xs mt-1">{hint}</p>
-      )}
-    </div>
-  );
-
-  // CHANGED: AR readiness chip at the top
-  const ARChip = () => (
-    <div
-      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium
-        ${arReadiness.ready
-          ? 'bg-green-500/10 text-success border border-green-500/20'
-          : 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/20'}`}
-    >
-      {arReadiness.ready ? <CheckCircle2 size={14} /> : <AlertTriangle size={14} />}
-      <span>{arReadiness.label}</span>
-    </div>
-  );
+  // ── Admin with no shop opened: block the whole form so uploads can never
+  //    target a null shop path.
+  if (isAdmin && !effectiveShopId) {
+    return (
+      <Layout title={t('wallpapers_add')}>
+        <div className="max-w-xl mx-auto mt-10 bg-card border border-primary/20 rounded-2xl p-8 text-center">
+          <AlertTriangle size={36} className="text-primary mx-auto mb-4" />
+          <h2 className="text-text-main font-bold text-lg mb-2">
+            {currentLang === 'uz' ? 'Avval do\'konni oching' : 'Open a shop first'}
+          </h2>
+          <p className="text-subtext text-sm mb-6">
+            {currentLang === 'uz'
+              ? 'Oboy qo\'shish uchun Do\'konlar sahifasiga o\'ting va do\'konning "Ochish" tugmasini bosing.'
+              : 'To add a wallpaper, go to the Shops page and press "Open" on the shop you want to manage.'}
+          </p>
+          <button
+            onClick={() => router.push('/shops')}
+            className="px-6 py-2.5 bg-primary hover:bg-secondary text-dark font-bold text-sm rounded-lg transition-all"
+          >
+            {currentLang === 'uz' ? 'Do\'konlarga o\'tish' : 'Go to Shops'}
+          </button>
+        </div>
+      </Layout>
+    );
+  }
 
   return (
     <Layout title={t('wallpapers_add')}>
@@ -191,10 +227,10 @@ export default function AddWallpaperPage() {
             <ArrowLeft size={16} />
             Back
           </button>
-          <ARChip />
+          <ARChip arReadiness={arReadiness} />
         </div>
 
-        {/* CHANGED: Validation summary banner — only shows after first save attempt */}
+        {/* Validation summary banner — only shows after first save attempt */}
         {touched && validationErrors.length > 0 && (
           <div className="bg-error/10 border border-error/30 rounded-xl px-4 py-3 space-y-1">
             <div className="flex items-center gap-2 text-error text-sm font-semibold">
@@ -219,8 +255,8 @@ export default function AddWallpaperPage() {
         <div className="bg-card border border-white/5 rounded-xl p-6 space-y-4">
           <h3 className="text-text-main font-semibold">{t('wallpapers_name')}</h3>
           <div className="flex gap-1 mb-0">
-            <TabBtn id="uz" label="O'zbek" active={nameTab === 'uz'} onClick={() => setNameTab('uz')} />
-            <TabBtn id="en" label="English" active={nameTab === 'en'} onClick={() => setNameTab('en')} />
+            <TabBtn label="O'zbek" active={nameTab === 'uz'} onClick={() => setNameTab('uz')} />
+            <TabBtn label="English" active={nameTab === 'en'} onClick={() => setNameTab('en')} />
           </div>
           <div className="border border-white/10 rounded-b-lg rounded-tr-lg p-4 bg-surface space-y-4">
             {nameTab === 'uz' ? (
@@ -236,8 +272,8 @@ export default function AddWallpaperPage() {
 
           <h3 className="text-text-main font-semibold pt-2">{t('wallpapers_description')}</h3>
           <div className="flex gap-1">
-            <TabBtn id="uz" label="O'zbek" active={descTab === 'uz'} onClick={() => setDescTab('uz')} />
-            <TabBtn id="en" label="English" active={descTab === 'en'} onClick={() => setDescTab('en')} />
+            <TabBtn label="O'zbek" active={descTab === 'uz'} onClick={() => setDescTab('uz')} />
+            <TabBtn label="English" active={descTab === 'en'} onClick={() => setDescTab('en')} />
           </div>
           <div className="border border-white/10 rounded-b-lg rounded-tr-lg p-4 bg-surface">
             {descTab === 'uz' ? (
@@ -356,7 +392,7 @@ export default function AddWallpaperPage() {
           </div>
         </div>
 
-        {/* CHANGED: Images section with stronger UX */}
+        {/* Images section */}
         <div className="bg-card border border-white/5 rounded-xl p-6 space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-text-main font-semibold">{t('wallpapers_images')}</h3>
@@ -369,7 +405,7 @@ export default function AddWallpaperPage() {
           </div>
           <ImageUpload
             multiple
-            folder={`wallpapers/${shopId}`}
+            folder={`wallpapers/${effectiveShopId}`}
             existingUrls={images}
             onUpload={(urls) => setImages((prev) => [...prev, ...(Array.isArray(urls) ? urls : [urls])])}
             onRemove={(_, i) => setImages((prev) => prev.filter((_, j) => j !== i))}
@@ -404,7 +440,7 @@ export default function AddWallpaperPage() {
             If left empty, the first regular image will be used.
           </p>
           <ImageUpload
-            folder={`ar-textures/${shopId}`}
+            folder={`ar-textures/${effectiveShopId}`}
             existingUrls={arTexture ? [arTexture] : []}
             onUpload={(url) => setArTexture(Array.isArray(url) ? url[0] : url)}
             onRemove={() => setArTexture('')}
@@ -428,7 +464,7 @@ export default function AddWallpaperPage() {
           </button>
         </div>
 
-        {/* CHANGED: Actions with disabled state */}
+        {/* Actions */}
         <div className="flex items-center justify-end gap-3 pb-6">
           <button
             onClick={() => router.back()}
