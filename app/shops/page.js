@@ -1,18 +1,19 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
-  collection, getDocs, addDoc, updateDoc, doc, serverTimestamp, query, where, Timestamp,
+  collection, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, query, where, Timestamp,
 } from 'firebase/firestore';
+import { sendPasswordResetEmail } from 'firebase/auth';
 import {
   Plus, Eye, EyeOff, Copy, RefreshCw, ToggleLeft, ToggleRight,
-  Calendar, AlertCircle, Clock,
+  Calendar, AlertCircle, Clock, Trash2, Check, X, KeyRound, Inbox, Phone,
 } from 'lucide-react';
 import Layout from '../../components/Layout';
 import DataTable from '../../components/DataTable';
 import ConfirmModal from '../../components/ConfirmModal';
 import StatusBadge from '../../components/StatusBadge';
-import { db } from '../../lib/firebase';
+import { auth, db } from '../../lib/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { useCurrency } from '../../context/CurrencyContext';
@@ -26,6 +27,33 @@ const SUB_DEFAULTS = {
   amountUsd: 25,
   durationDays: 30,
   graceDays: 5,
+};
+
+// Bilingual strings for the NEW signup-request features (local, so the big
+// lib/i18n.js stays untouched; can be merged there post-launch).
+const REQ_STRINGS = {
+  en: {
+    requests_title: 'Pending Seller Requests',
+    requests_empty: 'No pending requests',
+    approve: 'Approve',
+    reject: 'Reject',
+    approved_toast: 'Approved! Token: {token} — send it to the seller after payment.',
+    rejected_toast: 'Request rejected',
+    reset_pw: 'Reset password',
+    reset_sent: 'Password reset email sent to {email}',
+    requested: 'Requested',
+  },
+  uz: {
+    requests_title: 'Kutilayotgan sotuvchi so\'rovlari',
+    requests_empty: 'Kutilayotgan so\'rovlar yo\'q',
+    approve: 'Tasdiqlash',
+    reject: 'Rad etish',
+    approved_toast: 'Tasdiqlandi! Token: {token} — to\'lovdan keyin sotuvchiga yuboring.',
+    rejected_toast: 'So\'rov rad etildi',
+    reset_pw: 'Parolni tiklash',
+    reset_sent: 'Parolni tiklash xati {email} manziliga yuborildi',
+    requested: 'So\'ralgan sana',
+  },
 };
 
 function generateToken() {
@@ -85,11 +113,13 @@ function SubscriptionBadge({ shop, t }) {
 }
 
 export default function ShopsPage() {
-  const { t } = useLanguage();
+  const { t, currentLang } = useLanguage();
+  const R = REQ_STRINGS[currentLang] || REQ_STRINGS.en;
   const { format } = useCurrency();
   const { currentUser, isAdmin } = useAuth();
 
   const [shops, setShops] = useState([]);
+  const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [regenModal, setRegenModal] = useState(null);
@@ -97,18 +127,31 @@ export default function ShopsPage() {
   const [extendModal, setExtendModal] = useState(null);
   const [extendForm, setExtendForm] = useState({ months: 1, amount: SUB_DEFAULTS.amountUsd, notes: '' });
   const [extending, setExtending] = useState(false);
+  const [deleteModal, setDeleteModal] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+  const [actionRequestId, setActionRequestId] = useState(null);
   const [revealedTokens, setRevealedTokens] = useState({});
   const [form, setForm] = useState({
     nameUz: '', nameEn: '', sellerEmail: '', token: generateToken(),
   });
   const [saving, setSaving] = useState(false);
 
+  // Hard double-submit guard. React state updates are async, so a rapid
+  // double-tap can fire a handler twice before state flips. This ref
+  // flips synchronously and blocks the second call instantly.
+  const busyRef = useRef(false);
+
   const fetchShops = async () => {
     setLoading(true);
     try {
-      const snap = await getDocs(collection(db, 'shops'));
-      setShops(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      const [shopSnap, reqSnap] = await Promise.all([
+        getDocs(collection(db, 'shops')),
+        getDocs(query(collection(db, 'signupRequests'), where('status', '==', 'pending'))),
+      ]);
+      setShops(shopSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      setRequests(reqSnap.docs.map((d) => ({ id: d.id, ...d.data() })));
     } catch (e) {
+      console.error(e);
       toast.error(t('common_error'));
     } finally {
       setLoading(false);
@@ -124,9 +167,133 @@ export default function ShopsPage() {
   };
 
   // ──────────────────────────────────────────────────────────────────────
-  // Create shop — auto-starts first 30-day subscription period
+  // Shared shop-creation core. Returns { shopId, token, expiresAt }.
+  // Writes BOTH name (legacy field the mobile app's older code paths read)
+  // AND nameUz/nameEn — so shop names always display everywhere.
+  // ──────────────────────────────────────────────────────────────────────
+  const createShopDoc = async ({ nameUz, nameEn, sellerEmail, token }) => {
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + SUB_DEFAULTS.durationDays * 86400000);
+
+    const shopRef = await addDoc(collection(db, 'shops'), {
+      name: nameEn || nameUz,            // ★ NEW: legacy display field
+      nameUz,
+      nameEn,
+      sellerEmail,
+      token,
+      isActive: true,
+      totalSales: 0,
+      exchangeRate: 12500,
+      subscription: {
+        active: true,
+        plan: SUB_DEFAULTS.plan,
+        amountUsd: SUB_DEFAULTS.amountUsd,
+        graceDays: SUB_DEFAULTS.graceDays,
+        startedAt: Timestamp.fromDate(now),
+        expiresAt: Timestamp.fromDate(expiresAt),
+        lastPaidAt: Timestamp.fromDate(now),
+      },
+      createdBy: currentUser?.uid,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+
+    await addDoc(collection(db, 'shops', shopRef.id, 'subscriptionHistory'), {
+      paidAt: Timestamp.fromDate(now),
+      amountUsd: SUB_DEFAULTS.amountUsd,
+      periodStart: Timestamp.fromDate(now),
+      periodEnd: Timestamp.fromDate(expiresAt),
+      months: 1,
+      recordedBy: currentUser?.uid,
+      notes: t('sub_initial_note'),
+      createdAt: serverTimestamp(),
+    });
+
+    return { shopId: shopRef.id, token, expiresAt };
+  };
+
+  // ──────────────────────────────────────────────────────────────────────
+  // APPROVE a self-signup request: create shop + link the seller's
+  // existing Auth account (users/{uid}) to it. No manual UID copying.
+  // ──────────────────────────────────────────────────────────────────────
+  const handleApproveRequest = async (request) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setActionRequestId(request.id);
+    try {
+      const token = generateToken();
+      const { shopId } = await createShopDoc({
+        nameUz: request.shopName,
+        nameEn: request.shopName,
+        sellerEmail: request.email,
+        token,
+      });
+
+      // Link the seller's account (doc ID = their Auth UID, written at signup)
+      await updateDoc(doc(db, 'users', request.uid), {
+        role: 'shopkeeper',
+        shopId,
+        updatedAt: serverTimestamp(),
+      });
+
+      await updateDoc(doc(db, 'signupRequests', request.id), {
+        status: 'approved',
+        shopId,
+        token,
+        approvedBy: currentUser?.uid,
+        approvedAt: serverTimestamp(),
+      });
+
+      toast.success(R.approved_toast.replace('{token}', token), { duration: 8000 });
+      fetchShops();
+    } catch (e) {
+      console.error(e);
+      toast.error(t('common_error') + ': ' + e.message);
+    } finally {
+      busyRef.current = false;
+      setActionRequestId(null);
+    }
+  };
+
+  const handleRejectRequest = async (request) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setActionRequestId(request.id);
+    try {
+      await updateDoc(doc(db, 'signupRequests', request.id), {
+        status: 'rejected',
+        rejectedBy: currentUser?.uid,
+        rejectedAt: serverTimestamp(),
+      });
+      toast.success(R.rejected_toast);
+      fetchShops();
+    } catch (e) {
+      toast.error(t('common_error'));
+    } finally {
+      busyRef.current = false;
+      setActionRequestId(null);
+    }
+  };
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Send password-reset email to a shop's seller.
+  // ──────────────────────────────────────────────────────────────────────
+  const handleResetPassword = async (shop) => {
+    if (!shop.sellerEmail) return;
+    try {
+      await sendPasswordResetEmail(auth, shop.sellerEmail);
+      toast.success(R.reset_sent.replace('{email}', shop.sellerEmail));
+    } catch (e) {
+      // Generic message either way — don't leak whether email exists
+      toast.success(R.reset_sent.replace('{email}', shop.sellerEmail));
+    }
+  };
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Manual create (admin-driven, still available)
   // ──────────────────────────────────────────────────────────────────────
   const handleCreate = async () => {
+    if (busyRef.current) return;
     if (!form.nameUz || !form.nameEn) {
       toast.error(t('shops_name_required'));
       return;
@@ -135,47 +302,14 @@ export default function ShopsPage() {
       toast.error(t('shops_email_required'));
       return;
     }
+    busyRef.current = true;
     setSaving(true);
     try {
-      const now = new Date();
-      const expiresAt = new Date(now.getTime() + SUB_DEFAULTS.durationDays * 86400000);
-
-      const shopData = {
+      const { expiresAt } = await createShopDoc({
         nameUz: form.nameUz,
         nameEn: form.nameEn,
         sellerEmail: form.sellerEmail,
         token: form.token,
-        isActive: true,
-        totalSales: 0,
-        exchangeRate: 12500,
-
-        subscription: {
-          active: true,
-          plan: SUB_DEFAULTS.plan,
-          amountUsd: SUB_DEFAULTS.amountUsd,
-          graceDays: SUB_DEFAULTS.graceDays,
-          startedAt: Timestamp.fromDate(now),
-          expiresAt: Timestamp.fromDate(expiresAt),
-          lastPaidAt: Timestamp.fromDate(now),
-        },
-
-        createdBy: currentUser?.uid,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      };
-
-      const shopRef = await addDoc(collection(db, 'shops'), shopData);
-      const shopId = shopRef.id;
-
-      await addDoc(collection(db, 'shops', shopId, 'subscriptionHistory'), {
-        paidAt: Timestamp.fromDate(now),
-        amountUsd: SUB_DEFAULTS.amountUsd,
-        periodStart: Timestamp.fromDate(now),
-        periodEnd: Timestamp.fromDate(expiresAt),
-        months: 1,
-        recordedBy: currentUser?.uid,
-        notes: t('sub_initial_note'),
-        createdAt: serverTimestamp(),
       });
 
       const userExists = await checkUserExists(form.sellerEmail);
@@ -183,7 +317,7 @@ export default function ShopsPage() {
         await addDoc(collection(db, 'users'), {
           email: form.sellerEmail,
           role: 'shopkeeper',
-          shopId,
+          shopId: null,
           displayName: form.nameEn,
           createdBy: currentUser?.uid,
           createdAt: serverTimestamp(),
@@ -202,6 +336,7 @@ export default function ShopsPage() {
       console.error(e);
       toast.error(t('common_error') + ': ' + e.message);
     } finally {
+      busyRef.current = false;
       setSaving(false);
     }
   };
@@ -263,6 +398,24 @@ export default function ShopsPage() {
       notes: '',
     });
     setExtendModal(shop);
+  };
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Delete shop (admin cleanup for duplicates / mistakes)
+  // ──────────────────────────────────────────────────────────────────────
+  const handleDelete = async () => {
+    if (!deleteModal) return;
+    setDeleting(true);
+    try {
+      await deleteDoc(doc(db, 'shops', deleteModal.id));
+      toast.success(t('common_success'));
+      setDeleteModal(null);
+      fetchShops();
+    } catch (e) {
+      toast.error(t('common_error'));
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const handleToggleActive = async (shop) => {
@@ -380,6 +533,24 @@ export default function ShopsPage() {
             <RefreshCw size={14} />
             {t('shops_regenerate_token')}
           </button>
+          <button
+            onClick={() => handleResetPassword(row)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
+              bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 transition-all"
+            title={R.reset_pw}
+          >
+            <KeyRound size={14} />
+            {R.reset_pw}
+          </button>
+          <button
+            onClick={() => setDeleteModal(row)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
+              bg-red-500/10 text-error hover:bg-red-500/20 transition-all"
+            title={t('common_delete')}
+          >
+            <Trash2 size={14} />
+            {t('common_delete')}
+          </button>
         </div>
       ),
     },
@@ -387,6 +558,60 @@ export default function ShopsPage() {
 
   return (
     <Layout title={t('shops_title')}>
+      {/* ── Pending seller requests panel ─────────────────────────────── */}
+      {requests.length > 0 && (
+        <div className="bg-card border border-primary/20 rounded-xl mb-5 overflow-hidden">
+          <div className="px-5 py-3 border-b border-white/5 flex items-center gap-2">
+            <Inbox size={16} className="text-primary" />
+            <h2 className="text-text-main font-semibold text-sm">{R.requests_title}</h2>
+            <span className="ml-auto px-2 py-0.5 rounded-full bg-primary/15 text-primary text-xs font-bold">
+              {requests.length}
+            </span>
+          </div>
+          <div className="divide-y divide-white/5">
+            {requests.map((req) => (
+              <div key={req.id} className="px-5 py-4 flex items-center gap-4 flex-wrap">
+                <div className="flex-1 min-w-[200px]">
+                  <p className="text-text-main font-medium">{req.shopName}</p>
+                  <div className="flex items-center gap-3 flex-wrap mt-0.5">
+                    <span className="text-subtext text-xs">{req.email}</span>
+                    {req.phone && (
+                      <a href={`tel:${req.phone}`} className="flex items-center gap-1 text-primary text-xs hover:underline">
+                        <Phone size={11} />
+                        {req.phone}
+                      </a>
+                    )}
+                    <span className="text-subtext text-xs">
+                      {R.requested}: {req.createdAt?.toDate?.()?.toLocaleDateString() || '—'}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handleApproveRequest(req)}
+                    disabled={actionRequestId === req.id}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold
+                      bg-green-500/15 text-success hover:bg-green-500/25 transition-all disabled:opacity-50"
+                  >
+                    <Check size={14} />
+                    {actionRequestId === req.id ? t('common_loading') : R.approve}
+                  </button>
+                  <button
+                    onClick={() => handleRejectRequest(req)}
+                    disabled={actionRequestId === req.id}
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold
+                      bg-red-500/10 text-error hover:bg-red-500/20 transition-all disabled:opacity-50"
+                  >
+                    <X size={14} />
+                    {R.reject}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <DataTable
         columns={columns}
         data={shops}
@@ -598,6 +823,18 @@ export default function ShopsPage() {
         danger
         loading={regenLoading}
         confirmText={t('shops_regenerate_token')}
+      />
+
+      {/* Delete Shop Confirmation */}
+      <ConfirmModal
+        isOpen={!!deleteModal}
+        onClose={() => setDeleteModal(null)}
+        onConfirm={handleDelete}
+        title={t('common_delete_title')}
+        message={`${deleteModal?.nameEn || ''} — ${t('common_delete_confirm')} ${t('common_cannot_undo')}`}
+        danger
+        loading={deleting}
+        confirmText={t('common_delete')}
       />
     </Layout>
   );
