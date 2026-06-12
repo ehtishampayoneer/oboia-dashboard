@@ -1,13 +1,14 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   collection, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp, query, where, Timestamp,
 } from 'firebase/firestore';
 import { sendPasswordResetEmail } from 'firebase/auth';
 import {
   Plus, Eye, EyeOff, Copy, RefreshCw, ToggleLeft, ToggleRight,
-  Calendar, AlertCircle, Clock, Trash2, Check, X, KeyRound, Inbox, Phone, Pencil,
+  Calendar, AlertCircle, Clock, Trash2, Check, X, KeyRound, Inbox, Phone, Pencil, FolderOpen,
 } from 'lucide-react';
 import Layout from '../../components/Layout';
 import DataTable from '../../components/DataTable';
@@ -44,6 +45,8 @@ const REQ_STRINGS = {
     edit: 'Edit',
     edit_shop: 'Edit Shop',
     edit_saved: 'Shop updated',
+    open: 'Open',
+    opening: 'Now managing {name} — use Categories & Wallpapers in the sidebar',
   },
   uz: {
     requests_title: 'Kutilayotgan sotuvchi so\'rovlari',
@@ -57,6 +60,8 @@ const REQ_STRINGS = {
     edit: 'Tahrirlash',
     edit_shop: 'Do\'konni tahrirlash',
     edit_saved: 'Do\'kon yangilandi',
+    open: 'Ochish',
+    opening: 'Endi {name} boshqarilmoqda — yon paneldagi Kategoriyalar va Oboylardan foydalaning',
   },
 };
 
@@ -120,7 +125,8 @@ export default function ShopsPage() {
   const { t, currentLang } = useLanguage();
   const R = REQ_STRINGS[currentLang] || REQ_STRINGS.en;
   const { format } = useCurrency();
-  const { currentUser, isAdmin } = useAuth();
+  const { currentUser, isAdmin, setShopOverride } = useAuth();
+  const router = useRouter();
 
   const [shops, setShops] = useState([]);
   const [requests, setRequests] = useState([]);
@@ -493,6 +499,15 @@ export default function ShopsPage() {
     }
   };
 
+  // ── ENTER a shop: the whole dashboard (Categories, Wallpapers,
+  //    Warehouse, Sales...) switches to operate on this shop. The header
+  //    switcher shows which shop you're inside.
+  const openShop = (shop) => {
+    setShopOverride(shop.id);
+    toast.success(R.opening.replace('{name}', shop.nameEn || shop.nameUz || ''), { duration: 4000 });
+    router.push('/wallpapers');
+  };
+
   const copyToken = (token) => {
     navigator.clipboard.writeText(token);
     toast.success(t('shops_token_copied'));
@@ -502,10 +517,12 @@ export default function ShopsPage() {
     {
       key: 'name', label: t('shops_name'), accessor: 'nameEn',
       render: (_, row) => (
-        <div>
-          <p className="text-text-main font-medium">{row.nameEn}</p>
+        <button onClick={() => openShop(row)} className="text-left group">
+          <p className="text-text-main font-medium group-hover:text-primary group-hover:underline transition-colors">
+            {row.nameEn}
+          </p>
           <p className="text-subtext text-xs">{row.nameUz}</p>
-        </div>
+        </button>
       ),
     },
     {
@@ -548,6 +565,15 @@ export default function ShopsPage() {
       key: 'actions', label: t('common_actions'), sortable: false,
       render: (_, row) => (
         <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={() => openShop(row)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold
+              bg-primary text-dark hover:bg-secondary transition-all"
+            title={R.open}
+          >
+            <FolderOpen size={14} />
+            {R.open}
+          </button>
           <button
             onClick={() => openEditModal(row)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
