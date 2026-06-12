@@ -1,5 +1,4 @@
 'use client';
-
 import { createContext, useContext, useState, useEffect } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
 import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
@@ -11,9 +10,28 @@ export function AuthProvider({ children }) {
   const [currentUser, setCurrentUser] = useState(null);
   const [userDoc, setUserDoc] = useState(null);
   const [userRole, setUserRole] = useState(null);
-  const [shopId, setShopId] = useState(null);
+  const [baseShopId, setBaseShopId] = useState(null);   // shop from the user's own doc
+  const [shopOverride, setShopOverrideState] = useState(null); // admin-selected shop
   const [branchId, setBranchId] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  // Hydrate the admin's shop selection from localStorage (survives reloads)
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('wallar_admin_shop');
+      if (saved) setShopOverrideState(saved);
+    }
+  }, []);
+
+  /// Admin shop switcher setter. Pass a shopId to operate on that shop,
+  /// or null to return to the admin's own default shop.
+  const setShopOverride = (id) => {
+    setShopOverrideState(id || null);
+    if (typeof window !== 'undefined') {
+      if (id) localStorage.setItem('wallar_admin_shop', id);
+      else localStorage.removeItem('wallar_admin_shop');
+    }
+  };
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (user) => {
@@ -24,12 +42,11 @@ export function AuthProvider({ children }) {
           const userRef = doc(db, 'users', user.uid);
           let snap = await getDoc(userRef);
           let userData = null;
-
           if (snap.exists()) {
             userData = snap.data();
             setUserDoc({ id: snap.id, ...userData });
             setUserRole(userData.role || 'seller');
-            setShopId(userData.shopId || null);
+            setBaseShopId(userData.shopId || null);
             setBranchId(userData.branchId || null);
           } else {
             // If not found by UID, search by email (for shopkeepers created via admin panel)
@@ -40,17 +57,16 @@ export function AuthProvider({ children }) {
               userData = docSnap.data();
               setUserDoc({ id: docSnap.id, ...userData });
               setUserRole(userData.role || 'seller');
-              setShopId(userData.shopId || null);
+              setBaseShopId(userData.shopId || null);
               setBranchId(userData.branchId || null);
             } else {
               // No user document – treat as unknown (e.g., customer or unregistered)
               setUserDoc(null);
               setUserRole(null);
-              setShopId(null);
+              setBaseShopId(null);
               setBranchId(null);
             }
           }
-
           // Set session cookies for middleware if user exists
           if (userData && typeof document !== 'undefined') {
             document.cookie = `wallar_session=1; path=/; max-age=86400`;
@@ -63,9 +79,8 @@ export function AuthProvider({ children }) {
         setCurrentUser(null);
         setUserDoc(null);
         setUserRole(null);
-        setShopId(null);
+        setBaseShopId(null);
         setBranchId(null);
-
         // Clear cookies
         if (typeof document !== 'undefined') {
           document.cookie = 'wallar_session=; path=/; max-age=0';
@@ -74,11 +89,14 @@ export function AuthProvider({ children }) {
       }
       setLoading(false);
     });
-
     return () => unsub();
   }, []);
 
   const isAdmin = userRole === 'admin' || userRole === 'superadmin';
+
+  // The shopId the whole dashboard uses. For admins with a shop selected in
+  // the header switcher, it's the selected shop; otherwise the user's own.
+  const shopId = isAdmin && shopOverride ? shopOverride : baseShopId;
 
   return (
     <AuthContext.Provider
@@ -87,6 +105,9 @@ export function AuthProvider({ children }) {
         userDoc,
         userRole,
         shopId,
+        baseShopId,
+        shopOverride,
+        setShopOverride,
         branchId,
         setBranchId,
         loading,
