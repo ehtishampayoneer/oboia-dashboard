@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, CheckCircle2, AlertTriangle, Sparkles, Info } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, AlertTriangle, Sparkles, Info, Plus, X } from 'lucide-react';
 import Layout from '../../../components/Layout';
 import ImageUpload from '../../../components/ImageUpload';
 import { useAuth } from '../../../context/AuthContext';
@@ -10,7 +10,7 @@ import { useLanguage } from '../../../context/LanguageContext';
 import { useCurrency } from '../../../context/CurrencyContext';
 import { addWallpaper } from '../../../lib/db/wallpapers';
 import { convertToUSD } from '../../../lib/currency';
-import { collection, getDocs, query, where } from 'firebase/firestore';
+import { collection, getDocs, query, where, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../../lib/firebase';
 import toast from 'react-hot-toast';
 
@@ -80,6 +80,10 @@ export default function AddWallpaperPage() {
   const [arTexture, setArTexture] = useState('');
   const [saving, setSaving] = useState(false);
   const [touched, setTouched] = useState(false);
+  // Inline "new category" creator
+  const [showNewCat, setShowNewCat] = useState(false);
+  const [newCat, setNewCat] = useState({ nameUz: '', nameEn: '' });
+  const [savingCat, setSavingCat] = useState(false);
 
   const [form, setForm] = useState({
     nameUz: '', nameEn: '', descriptionUz: '', descriptionEn: '',
@@ -94,16 +98,54 @@ export default function AddWallpaperPage() {
   const sellUSD = form.sellPrice ? convertToUSD(Number(form.sellPrice), exchangeRate).toFixed(2) : '0.00';
   const costUSD = form.costPrice ? convertToUSD(Number(form.costPrice), exchangeRate).toFixed(2) : '0.00';
 
+  const loadCategories = async () => {
+    if (!effectiveShopId) return [];
+    const snap = await getDocs(
+      query(collection(db, 'categories'), where('shopId', '==', effectiveShopId))
+    );
+    const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => (a.nameEn || '').localeCompare(b.nameEn || ''));
+    setCategories(list);
+    return list;
+  };
+
   useEffect(() => {
     if (!effectiveShopId) return;
-    Promise.all([
-      getDocs(query(collection(db, 'categories'), where('shopId', '==', effectiveShopId))),
-      getDocs(query(collection(db, 'suppliers'), where('shopId', '==', effectiveShopId))),
-    ]).then(([cats, sups]) => {
-      setCategories(cats.docs.map((d) => ({ id: d.id, ...d.data() })));
-      setSuppliers(sups.docs.map((d) => ({ id: d.id, ...d.data() })));
-    });
+    loadCategories();
+    getDocs(query(collection(db, 'suppliers'), where('shopId', '==', effectiveShopId)))
+      .then((sups) => setSuppliers(sups.docs.map((d) => ({ id: d.id, ...d.data() }))));
   }, [effectiveShopId]);
+
+  // Create a category inline, then refresh the dropdown and auto-select it.
+  const handleCreateCategory = async () => {
+    if (!effectiveShopId) return;
+    if (!newCat.nameUz.trim() || !newCat.nameEn.trim()) {
+      toast.error('Category name required in both languages');
+      return;
+    }
+    setSavingCat(true);
+    try {
+      const ref = await addDoc(collection(db, 'categories'), {
+        nameUz: newCat.nameUz.trim(),
+        nameEn: newCat.nameEn.trim(),
+        image: '',
+        shopId: effectiveShopId,
+        sortOrder: categories.length,
+        createdBy: currentUser.uid,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      await loadCategories();
+      set('categoryId', ref.id);          // auto-select the new category
+      setNewCat({ nameUz: '', nameEn: '' });
+      setShowNewCat(false);
+      toast.success('Category added');
+    } catch (e) {
+      toast.error(e?.message || 'Could not add category');
+    } finally {
+      setSavingCat(false);
+    }
+  };
 
   const set = (key, val) => setForm((f) => ({ ...f, [key]: val }));
 
@@ -112,6 +154,7 @@ export default function AddWallpaperPage() {
     const errs = [];
     if (!form.nameUz.trim()) errs.push({ key: 'nameUz', msg: 'Name (Uzbek) is required' });
     if (!form.nameEn.trim()) errs.push({ key: 'nameEn', msg: 'Name (English) is required' });
+    if (!form.categoryId) errs.push({ key: 'categoryId', msg: 'Please choose a category (or create one)' });
     if (!form.sellPrice || Number(form.sellPrice) <= 0) {
       errs.push({ key: 'sellPrice', msg: 'Sell price must be greater than 0' });
     }
@@ -287,13 +330,35 @@ export default function AddWallpaperPage() {
         {/* Category & Supplier */}
         <div className="bg-card border border-white/5 rounded-xl p-6">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Field label={t('wallpapers_category')}>
-              <select value={form.categoryId} onChange={(e) => set('categoryId', e.target.value)}>
-                <option value="">Select category...</option>
-                {categories.map((c) => (
-                  <option key={c.id} value={c.id}>{c.nameEn} / {c.nameUz}</option>
-                ))}
-              </select>
+            <Field label={`${t('wallpapers_category')} *`} error={errorFor('categoryId')}>
+              <div className="flex items-center gap-2">
+                <select
+                  value={form.categoryId}
+                  onChange={(e) => set('categoryId', e.target.value)}
+                  className="flex-1"
+                >
+                  <option value="">Select category...</option>
+                  {categories.map((c) => (
+                    <option key={c.id} value={c.id}>{c.nameEn} / {c.nameUz}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => setShowNewCat(true)}
+                  className="flex items-center gap-1 px-3 py-2 rounded-lg bg-primary/15 text-primary
+                    hover:bg-primary/25 transition-all text-sm font-semibold flex-shrink-0 whitespace-nowrap"
+                  title="Create a new category"
+                >
+                  <Plus size={14} />
+                  New
+                </button>
+              </div>
+              {categories.length === 0 && (
+                <p className="text-yellow-400 text-xs mt-1 flex items-center gap-1">
+                  <Info size={12} />
+                  No categories yet — click "New" to create your first one.
+                </p>
+              )}
             </Field>
             <Field label={t('wallpapers_supplier')}>
               <select value={form.supplierId} onChange={(e) => set('supplierId', e.target.value)}>
@@ -485,6 +550,58 @@ export default function AddWallpaperPage() {
           </button>
         </div>
       </div>
+
+      {/* Inline "New Category" popup */}
+      {showNewCat && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="w-full max-w-sm bg-card border border-white/10 rounded-2xl shadow-card">
+            <div className="flex items-center justify-between p-5 border-b border-white/5">
+              <h3 className="text-text-main font-bold">New Category</h3>
+              <button type="button" onClick={() => setShowNewCat(false)} className="text-subtext hover:text-text-main">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="p-5 space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-text-main mb-1.5">Category name (Uzbek)</label>
+                <input
+                  type="text"
+                  value={newCat.nameUz}
+                  onChange={(e) => setNewCat((c) => ({ ...c, nameUz: e.target.value }))}
+                  placeholder="masalan: Gulli"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-text-main mb-1.5">Category name (English)</label>
+                <input
+                  type="text"
+                  value={newCat.nameEn}
+                  onChange={(e) => setNewCat((c) => ({ ...c, nameEn: e.target.value }))}
+                  placeholder="e.g. Floral"
+                />
+              </div>
+              <p className="text-subtext text-xs">You can add a category image later from the Categories page.</p>
+            </div>
+            <div className="flex items-center justify-end gap-3 px-5 py-4 border-t border-white/5">
+              <button
+                type="button"
+                onClick={() => setShowNewCat(false)}
+                className="px-4 py-2 text-sm text-subtext border border-white/10 rounded-lg"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleCreateCategory}
+                disabled={savingCat}
+                className="px-5 py-2 bg-primary hover:bg-secondary text-dark font-bold text-sm rounded-lg transition-all disabled:opacity-50"
+              >
+                {savingCat ? 'Saving...' : 'Add Category'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </Layout>
   );
 }
