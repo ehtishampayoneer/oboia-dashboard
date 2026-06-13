@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Plus, Edit2, Trash2, GripVertical } from 'lucide-react';
+import { Plus, Edit2, Trash2, GripVertical, AlertCircle } from 'lucide-react';
 import Layout from '../../components/Layout';
 import ImageUpload from '../../components/ImageUpload';
 import ConfirmModal from '../../components/ConfirmModal';
@@ -9,16 +9,30 @@ import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
 import {
   collection, getDocs, addDoc, updateDoc, deleteDoc, doc,
-  query, where, orderBy, serverTimestamp,
+  query, where, serverTimestamp,
 } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import toast from 'react-hot-toast';
 
 export default function CategoriesPage() {
-  const { shopId, currentUser, isAdmin } = useAuth();
+  const { shopId, shopOverride, currentUser, isAdmin } = useAuth();
   const { t, currentLang } = useLanguage();
 
+  // ── Which shop are we managing?
+  // Shopkeeper: always their own shop. Admin: the shop opened via the
+  // Shops page / header switcher; if none selected, admin sees ALL
+  // categories (read-only overview) but cannot ADD until a shop is opened —
+  // this is what killed the old "categories/null" upload bug and the
+  // invisible no-shop categories.
+  const effectiveShopId = isAdmin ? (shopOverride || null) : shopId;
+
+  const noShopMsg = currentLang === 'uz'
+    ? 'Avval Do\'konlar sahifasidan do\'konni oching'
+    : 'Open a shop first (Shops page → Open)';
+
   const [categories, setCategories] = useState([]);
+  const [wallpapers, setWallpapers] = useState([]);   // all wallpapers in this shop
+  const [viewCat, setViewCat] = useState(null);       // category whose wallpapers we're viewing
   const [loading, setLoading] = useState(true);
   const [addModal, setAddModal] = useState(false);
   const [editModal, setEditModal] = useState(null);
@@ -31,46 +45,59 @@ export default function CategoriesPage() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      // For admin: get all categories (no shop filter). For shopkeeper: filter by shopId.
-      let q = collection(db, 'categories');
-      if (!isAdmin && shopId) {
-        q = query(q, where('shopId', '==', shopId), orderBy('sortOrder', 'asc'));
+      // Categories — filtered to the managed shop; admins with no shop
+      // selected see everything. Sorting happens client-side so no
+      // Firestore composite index is ever required.
+      let snap;
+      if (effectiveShopId) {
+        snap = await getDocs(
+          query(collection(db, 'categories'), where('shopId', '==', effectiveShopId))
+        );
       } else if (isAdmin) {
-        q = query(q, orderBy('sortOrder', 'asc'));
+        snap = await getDocs(collection(db, 'categories'));
       } else {
-        // No shopId and not admin – just return empty
         setCategories([]);
+        setLoading(false);
         return;
       }
-      const snap = await getDocs(q);
-      const cats = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const cats = snap.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
 
-      // Get wallpaper counts (also filtered by shopId or admin)
-      let wpQuery = collection(db, 'wallpapers');
-      if (!isAdmin && shopId) {
-        wpQuery = query(wpQuery, where('shopId', '==', shopId));
+      // Wallpaper counts per category (same shop scope)
+      let wpSnap;
+      if (effectiveShopId) {
+        wpSnap = await getDocs(
+          query(collection(db, 'wallpapers'), where('shopId', '==', effectiveShopId))
+        );
+      } else {
+        wpSnap = await getDocs(collection(db, 'wallpapers'));
       }
-      const wpSnap = await getDocs(wpQuery);
+      const wpList = wpSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      setWallpapers(wpList);
       const countMap = {};
-      wpSnap.docs.forEach((d) => {
-        const catId = d.data().categoryId;
-        if (catId) countMap[catId] = (countMap[catId] || 0) + 1;
+      wpList.forEach((w) => {
+        if (w.categoryId) countMap[w.categoryId] = (countMap[w.categoryId] || 0) + 1;
       });
       setCategories(cats.map((c) => ({ ...c, wallpaperCount: countMap[c.id] || 0 })));
+    } catch (e) {
+      console.error(e);
+      toast.error(t('common_error'));
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => { fetchData(); }, [shopId, isAdmin]);
+  useEffect(() => { fetchData(); }, [effectiveShopId, isAdmin]);
 
   const handleAdd = async () => {
+    if (!effectiveShopId) { toast.error(noShopMsg); return; }
     if (!form.nameUz || !form.nameEn) { toast.error('Name required in both languages'); return; }
     setActionLoading(true);
     try {
       await addDoc(collection(db, 'categories'), {
         ...form,
-        shopId: isAdmin ? null : shopId,   // for admin, shopId can be null (global category)
+        shopId: effectiveShopId,           // ★ NEVER null — every category belongs to a shop
         sortOrder: categories.length,
         createdBy: currentUser.uid,
         createdAt: serverTimestamp(),
@@ -142,10 +169,22 @@ export default function CategoriesPage() {
 
   return (
     <Layout title={t('categories_title')}>
+      {/* Admin with no shop opened — friendly guidance banner */}
+      {isAdmin && !effectiveShopId && (
+        <div className="flex items-start gap-2 bg-primary/5 border border-primary/20 rounded-xl px-4 py-3 mb-4">
+          <AlertCircle size={16} className="text-primary flex-shrink-0 mt-0.5" />
+          <p className="text-sm text-subtext">{noShopMsg}</p>
+        </div>
+      )}
+
       <div className="flex items-center justify-between mb-5">
         <p className="text-subtext text-sm">{t('categories_drag_reorder')}</p>
         <button
-          onClick={() => { setForm({ nameUz: '', nameEn: '', image: '' }); setAddModal(true); }}
+          onClick={() => {
+            if (!effectiveShopId) { toast.error(noShopMsg); return; }
+            setForm({ nameUz: '', nameEn: '', image: '' });
+            setAddModal(true);
+          }}
           className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary hover:bg-secondary
             text-dark font-semibold text-sm transition-all hover:shadow-glow-sm"
         >
@@ -197,7 +236,14 @@ export default function CategoriesPage() {
                 <p className="text-subtext text-xs mt-0.5">
                   {cat.wallpaperCount} {t('categories_wallpaper_count')}
                 </p>
-                <div className="flex items-center gap-2 mt-3">
+                <button
+                  onClick={() => setViewCat(cat)}
+                  className="w-full mb-2 py-1.5 text-xs rounded-lg bg-primary/10 text-primary
+                    hover:bg-primary/20 transition-all text-center font-semibold"
+                >
+                  View {cat.wallpaperCount} wallpaper{cat.wallpaperCount === 1 ? '' : 's'}
+                </button>
+                <div className="flex items-center gap-2 mt-1">
                   <button
                     onClick={() => setEditModal({ ...cat })}
                     className="flex-1 py-1.5 text-xs rounded-lg bg-surface text-subtext hover:text-text-main hover:bg-white/10 transition-all text-center"
@@ -237,7 +283,7 @@ export default function CategoriesPage() {
                 <input type="text" value={form.nameEn} onChange={(e) => setForm((f) => ({ ...f, nameEn: e.target.value }))} />
               </div>
               <ImageUpload
-                folder={`categories/${shopId}`}
+                folder={`categories/${effectiveShopId}`}
                 existingUrls={form.image ? [form.image] : []}
                 onUpload={(url) => setForm((f) => ({ ...f, image: Array.isArray(url) ? url[0] : url }))}
                 onRemove={() => setForm((f) => ({ ...f, image: '' }))}
@@ -272,7 +318,7 @@ export default function CategoriesPage() {
                 <input type="text" value={editModal.nameEn} onChange={(e) => setEditModal((m) => ({ ...m, nameEn: e.target.value }))} />
               </div>
               <ImageUpload
-                folder={`categories/${shopId}`}
+                folder={`categories/${editModal.shopId || effectiveShopId}`}
                 existingUrls={editModal.image ? [editModal.image] : []}
                 onUpload={(url) => setEditModal((m) => ({ ...m, image: Array.isArray(url) ? url[0] : url }))}
                 onRemove={() => setEditModal((m) => ({ ...m, image: '' }))}
@@ -283,6 +329,66 @@ export default function CategoriesPage() {
               <button onClick={() => setEditModal(null)} className="px-4 py-2 text-sm text-subtext border border-white/10 rounded-lg">{t('common_cancel')}</button>
               <button onClick={handleEdit} disabled={actionLoading} className="px-5 py-2 bg-primary hover:bg-secondary text-dark font-bold text-sm rounded-lg transition-all disabled:opacity-50">
                 {actionLoading ? t('common_loading') : t('common_save')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Category wallpapers viewer */}
+      {viewCat && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="w-full max-w-2xl bg-card border border-white/10 rounded-2xl shadow-card max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between p-5 border-b border-white/5">
+              <div>
+                <h3 className="text-text-main font-bold">
+                  {currentLang === 'uz' ? viewCat.nameUz : viewCat.nameEn}
+                </h3>
+                <p className="text-subtext text-xs mt-0.5">Wallpapers in this category</p>
+              </div>
+              <button onClick={() => setViewCat(null)} className="text-subtext hover:text-text-main text-xl">✕</button>
+            </div>
+            <div className="p-5 overflow-y-auto">
+              {(() => {
+                const inCat = wallpapers.filter((w) => w.categoryId === viewCat.id);
+                if (inCat.length === 0) {
+                  return (
+                    <div className="text-center py-10 text-subtext text-sm">
+                      No wallpapers in this category yet.
+                    </div>
+                  );
+                }
+                return (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    {inCat.map((w) => (
+                      <div key={w.id} className="bg-surface border border-white/5 rounded-xl overflow-hidden">
+                        <div className="h-24 bg-dark">
+                          {w.images?.[0] || w.thumbnailUrl ? (
+                            <img src={w.images?.[0] || w.thumbnailUrl} alt="" className="w-full h-full object-cover" />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center text-subtext text-xs">—</div>
+                          )}
+                        </div>
+                        <div className="p-2">
+                          <p className="text-text-main text-sm font-medium truncate">
+                            {currentLang === 'uz' ? (w.nameUz || w.nameEn) : (w.nameEn || w.nameUz)}
+                          </p>
+                          <p className="text-subtext text-[11px] mt-0.5 capitalize">
+                            {w.approvalStatus || 'pending'} · {w.stock || 0} rolls
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+            </div>
+            <div className="px-5 py-4 border-t border-white/5 text-right">
+              <button
+                onClick={() => setViewCat(null)}
+                className="px-5 py-2 bg-surface text-text-main text-sm rounded-lg border border-white/10 hover:bg-white/5"
+              >
+                {t('common_cancel') || 'Close'}
               </button>
             </div>
           </div>
