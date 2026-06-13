@@ -14,6 +14,7 @@ import Layout from '../../components/Layout';
 import DataTable from '../../components/DataTable';
 import ConfirmModal from '../../components/ConfirmModal';
 import StatusBadge from '../../components/StatusBadge';
+import ImageUpload from '../../components/ImageUpload';
 import { auth, db } from '../../lib/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
@@ -140,7 +141,7 @@ export default function ShopsPage() {
   const [deleteModal, setDeleteModal] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [editModal, setEditModal] = useState(null);
-  const [editForm, setEditForm] = useState({ nameUz: '', nameEn: '' });
+  const [editForm, setEditForm] = useState({ nameUz: '', nameEn: '', logoUrl: '' });
   const [editSaving, setEditSaving] = useState(false);
   const [actionRequestId, setActionRequestId] = useState(null);
   const [revealedTokens, setRevealedTokens] = useState({});
@@ -312,7 +313,11 @@ export default function ShopsPage() {
   // EDIT shop names (keeps name/nameUz/nameEn in sync everywhere)
   // ──────────────────────────────────────────────────────────────────────
   const openEditModal = (shop) => {
-    setEditForm({ nameUz: shop.nameUz || '', nameEn: shop.nameEn || '' });
+    setEditForm({
+      nameUz: shop.nameUz || '',
+      nameEn: shop.nameEn || '',
+      logoUrl: shop.thumbnailUrl || '',
+    });
     setEditModal(shop);
   };
 
@@ -328,6 +333,7 @@ export default function ShopsPage() {
         name: editForm.nameEn || editForm.nameUz,
         nameUz: editForm.nameUz,
         nameEn: editForm.nameEn,
+        thumbnailUrl: editForm.logoUrl || '',
         updatedBy: currentUser?.uid,
         updatedAt: serverTimestamp(),
       });
@@ -725,6 +731,41 @@ export default function ShopsPage() {
                 <input type="text" value={editForm.nameEn}
                   onChange={(e) => setEditForm((f) => ({ ...f, nameEn: e.target.value }))} />
               </div>
+
+              {/* Shop logo — shown in the app's in-AR marketplace bar */}
+              <div>
+                <label className="block text-sm font-medium text-text-main mb-1.5">Shop Logo</label>
+                <p className="text-subtext text-xs mb-2">Square image. Appears in the mobile app's shop browser.</p>
+                <div className="flex items-center gap-3">
+                  {editForm.logoUrl ? (
+                    <img src={editForm.logoUrl} alt="logo"
+                      className="w-16 h-16 rounded-xl object-cover border border-white/10 flex-shrink-0" />
+                  ) : (
+                    <div className="w-16 h-16 rounded-xl bg-surface border border-white/10 flex items-center justify-center text-subtext text-xs flex-shrink-0">
+                      No logo
+                    </div>
+                  )}
+                  <div className="flex-1">
+                    <ImageUpload
+                      folder={`shop-logos/${editModal.id}`}
+                      existingUrls={[]}
+                      onUpload={(url) => setEditForm((f) => ({ ...f, logoUrl: Array.isArray(url) ? url[0] : url }))}
+                      onRemove={() => setEditForm((f) => ({ ...f, logoUrl: '' }))}
+                      label={null}
+                    />
+                    {editForm.logoUrl && (
+                      <button
+                        type="button"
+                        onClick={() => setEditForm((f) => ({ ...f, logoUrl: '' }))}
+                        className="text-xs text-error hover:underline mt-1"
+                      >
+                        Remove logo
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
               <p className="text-xs text-subtext">
                 {editModal.sellerEmail} · {editModal.token}
               </p>
