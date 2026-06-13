@@ -1,338 +1,314 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Eye, EyeOff, Copy, RefreshCw, Plus, GripVertical, Trash2 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { Plus, Check, X, Edit, Trash2, Search, AlertTriangle } from 'lucide-react';
 import Layout from '../../components/Layout';
+import DataTable from '../../components/DataTable';
+import StatusBadge from '../../components/StatusBadge';
 import ConfirmModal from '../../components/ConfirmModal';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { useCurrency } from '../../context/CurrencyContext';
-import { doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import {
+  getAllWallpapers, approveWallpaper, rejectWallpaper, deleteWallpaper,
+} from '../../lib/db/wallpapers';
+import { collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import toast from 'react-hot-toast';
+import Image from 'next/image';
 
-function generateToken() {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  let token = 'SHOP-';
-  for (let i = 0; i < 5; i++) token += chars[Math.floor(Math.random() * chars.length)];
-  return token;
-}
+export default function WallpapersPage() {
+  const { shopId, shopOverride, currentUser, isAdmin } = useAuth();
+  const { t, currentLang } = useLanguage();
+  const { format } = useCurrency();
+  const router = useRouter();
 
-export default function SettingsPage() {
-  const { shopId } = useAuth();
-  const { t } = useLanguage();
-  const { exchangeRate } = useCurrency();
+  // ── Which shop are we managing?
+  // Shopkeeper: always their own. Admin: the shop opened via the Shops
+  // page / header switcher; if none opened, admin sees ALL wallpapers
+  // (useful as the global approval queue).
+  const effectiveShopId = isAdmin ? (shopOverride || null) : shopId;
 
-  const [shop, setShop] = useState(null);
+  const [wallpapers, setWallpapers] = useState([]);
+  const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [showToken, setShowToken] = useState(false);
-  const [regenModal, setRegenModal] = useState(false);
-  const [regenLoading, setRegenLoading] = useState(false);
+  const [filters, setFilters] = useState({ categoryId: '', status: '', search: '' });
+  const [rejectModal, setRejectModal] = useState(null);
+  const [rejectReason, setRejectReason] = useState('');
+  const [deleteModal, setDeleteModal] = useState(null);
+  const [actionLoading, setActionLoading] = useState(false);
 
-  // Form states
-  const [newRate, setNewRate] = useState('');
-  const [threshold, setThreshold] = useState(5);
-  const [paymentTypes, setPaymentTypes] = useState([]);
-  const [newPaymentUz, setNewPaymentUz] = useState('');
-  const [newPaymentEn, setNewPaymentEn] = useState('');
-  const [notifications, setNotifications] = useState({
-    newOrders: true, lowStock: true, bonuses: true,
-  });
-
-  useEffect(() => {
-    if (!shopId) return;
-    const load = async () => {
-      setLoading(true);
-      try {
-        const snap = await getDoc(doc(db, 'shops', shopId));
-        if (snap.exists()) {
-          const data = snap.data();
-          setShop({ id: snap.id, ...data });
-          setNewRate(data.exchangeRate || 12500);
-          setThreshold(data.defaultLowStockThreshold || 5);
-          setPaymentTypes(data.paymentTypes || [
-            { id: 'cash', nameEn: 'Cash', nameUz: 'Naqd', isActive: true },
-          ]);
-          setNotifications(data.notifications || { newOrders: true, lowStock: true, bonuses: true });
-        }
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
-  }, [shopId]);
-
-  const updateShop = async (data) => {
-    await updateDoc(doc(db, 'shops', shopId), {
-      ...data,
-      updatedAt: serverTimestamp(),
-    });
-    const snap = await getDoc(doc(db, 'shops', shopId));
-    setShop({ id: snap.id, ...snap.data() });
+  const fetchData = async () => {
+    // Admin must OPEN a shop first. Without it we show nothing — never a
+    // global all-shops list (that was the cross-shop "bleed" bug).
+    if (isAdmin && !effectiveShopId) {
+      setWallpapers([]);
+      setCategories([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      const [wp, cats] = await Promise.all([
+        getAllWallpapers(effectiveShopId, filters),
+        getDocs(query(collection(db, 'categories'), where('shopId', '==', effectiveShopId))),
+      ]);
+      setWallpapers(wp);
+      setCategories(cats.docs.map((d) => ({ id: d.id, ...d.data() })));
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const handleUpdateRate = async () => {
-    const rate = Number(newRate);
-    if (!rate || rate <= 0) { toast.error('Enter valid rate'); return; }
-    setSaving(true);
+  useEffect(() => { fetchData(); }, [effectiveShopId, filters, isAdmin]);
+
+  const handleApprove = async (id) => {
+    setActionLoading(true);
     try {
-      await updateShop({ exchangeRate: rate });
-      toast.success(t('settings_rate_updated'));
+      await approveWallpaper(id, currentUser.uid);
+      toast.success(t('wallpapers_approve_success'));
+      fetchData();
     } catch {
       toast.error(t('common_error'));
     } finally {
-      setSaving(false);
+      setActionLoading(false);
     }
   };
 
-  const handleAddPayment = async () => {
-    if (!newPaymentUz || !newPaymentEn) { toast.error('Name required in both languages'); return; }
-    const id = newPaymentEn.toLowerCase().replace(/\s+/g, '_');
-    const updated = [...paymentTypes, { id, nameEn: newPaymentEn, nameUz: newPaymentUz, isActive: true }];
-    setPaymentTypes(updated);
-    setNewPaymentUz('');
-    setNewPaymentEn('');
-    await updateShop({ paymentTypes: updated });
-    toast.success('Payment type added');
-  };
-
-  const togglePayment = async (id) => {
-    const updated = paymentTypes.map((p) => p.id === id ? { ...p, isActive: !p.isActive } : p);
-    setPaymentTypes(updated);
-    await updateShop({ paymentTypes: updated });
-  };
-
-  const removePayment = async (id) => {
-    const updated = paymentTypes.filter((p) => p.id !== id);
-    setPaymentTypes(updated);
-    await updateShop({ paymentTypes: updated });
-  };
-
-  const handleRegenToken = async () => {
-    setRegenLoading(true);
+  const handleReject = async () => {
+    if (!rejectReason.trim()) { toast.error('Reason is required'); return; }
+    setActionLoading(true);
     try {
-      const newToken = generateToken();
-      await updateShop({ token: newToken });
-      toast.success('Token regenerated');
-      setRegenModal(false);
+      await rejectWallpaper(rejectModal.id, rejectReason, currentUser.uid);
+      toast.success(t('wallpapers_reject_success'));
+      setRejectModal(null);
+      setRejectReason('');
+      fetchData();
     } catch {
       toast.error(t('common_error'));
     } finally {
-      setRegenLoading(false);
+      setActionLoading(false);
     }
   };
 
-  const handleSaveNotifications = async () => {
-    setSaving(true);
+  const handleDelete = async () => {
+    setActionLoading(true);
     try {
-      await updateShop({ notifications, defaultLowStockThreshold: Number(threshold) });
-      toast.success(t('settings_save_success'));
+      await deleteWallpaper(deleteModal.id);
+      toast.success(t('wallpapers_delete_success'));
+      setDeleteModal(null);
+      fetchData();
     } catch {
       toast.error(t('common_error'));
     } finally {
-      setSaving(false);
+      setActionLoading(false);
     }
   };
 
-  const copyToken = () => {
-    if (shop?.token) {
-      navigator.clipboard.writeText(shop.token);
-      toast.success(t('settings_copy_token') + '!');
-    }
+  const getCatName = (id) => {
+    const cat = categories.find((c) => c.id === id);
+    return cat ? (currentLang === 'uz' ? cat.nameUz : cat.nameEn) : '—';
   };
 
-  if (loading) {
-    return (
-      <Layout title={t('settings_title')}>
-        <div className="flex items-center justify-center h-64">
-          <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+  const columns = [
+    {
+      key: 'img', label: '', sortable: false, width: 'w-12',
+      render: (_, row) => (
+        <div className="w-10 h-10 rounded-lg overflow-hidden bg-surface flex-shrink-0">
+          {row.images?.[0] ? (
+            <img src={row.images[0]} alt="" className="w-full h-full object-cover" />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center text-subtext text-xs">—</div>
+          )}
         </div>
-      </Layout>
-    );
-  }
+      ),
+    },
+    {
+      key: 'name', label: t('wallpapers_name'), accessor: 'nameEn',
+      render: (_, row) => (
+        <div>
+          <p className="text-text-main font-medium">{currentLang === 'uz' ? row.nameUz : row.nameEn}</p>
+          <p className="text-subtext text-xs">{getCatName(row.categoryId)}</p>
+        </div>
+      ),
+    },
+    {
+      key: 'sellPrice', label: t('wallpapers_sell_price'), accessor: 'sellPrice',
+      render: (v) => <span className="text-primary font-semibold">{format(v || 0)}</span>,
+    },
+    {
+      key: 'costPrice', label: t('wallpapers_cost_price'), accessor: 'costPrice',
+      render: (v) => <span className="text-subtext">{format(v || 0)}</span>,
+    },
+    {
+      key: 'stock', label: t('wallpapers_stock'), accessor: 'stock',
+      render: (v, row) => (
+        <span className={v <= (row.lowStockThreshold || 0) ? 'text-error font-bold' : 'text-text-main'}>
+          {v || 0} {t('common_rolls')}
+        </span>
+      ),
+    },
+    {
+      key: 'approval', label: t('wallpapers_approval'), sortable: false,
+      render: (_, row) => <StatusBadge status={row.approvalStatus || 'pending'} />,
+    },
+    {
+      key: 'status', label: t('wallpapers_status'), sortable: false,
+      render: (_, row) => <StatusBadge status={row.status || 'active'} />,
+    },
+    {
+      key: 'actions', label: t('common_actions'), sortable: false,
+      render: (_, row) => (
+        <div className="flex items-center gap-1.5">
+          {isAdmin && row.approvalStatus === 'pending' && (
+            <>
+              <button
+                onClick={() => handleApprove(row.id)}
+                className="p-1.5 rounded-lg bg-green-500/10 text-success hover:bg-green-500/20 transition-all"
+                title={t('wallpapers_approve')}
+              >
+                <Check size={14} />
+              </button>
+              <button
+                onClick={() => setRejectModal(row)}
+                className="p-1.5 rounded-lg bg-red-500/10 text-error hover:bg-red-500/20 transition-all"
+                title={t('wallpapers_reject')}
+              >
+                <X size={14} />
+              </button>
+            </>
+          )}
+          <button
+            onClick={() => router.push(`/wallpapers/${row.id}/edit`)}
+            className="p-1.5 rounded-lg bg-surface text-subtext hover:text-text-main hover:bg-white/10 transition-all"
+            title={t('common_edit')}
+          >
+            <Edit size={14} />
+          </button>
+          {isAdmin && (
+            <button
+              onClick={() => setDeleteModal(row)}
+              className="p-1.5 rounded-lg bg-red-500/10 text-error hover:bg-red-500/20 transition-all"
+              title={t('common_delete')}
+            >
+              <Trash2 size={14} />
+            </button>
+          )}
+        </div>
+      ),
+    },
+  ];
 
-  const Section = ({ title, children }) => (
-    <div className="bg-card border border-white/5 rounded-xl p-6">
-      <h2 className="text-text-main font-semibold mb-5 pb-3 border-b border-white/5">{title}</h2>
-      {children}
-    </div>
-  );
-
-  const Toggle = ({ checked, onChange, label, description }) => (
-    <div className="flex items-center justify-between py-3 border-b border-white/5 last:border-0">
-      <div>
-        <p className="text-text-main text-sm font-medium">{label}</p>
-        {description && <p className="text-subtext text-xs mt-0.5">{description}</p>}
-      </div>
-      <button
-        type="button"
-        onClick={onChange}
-        className={`relative w-11 h-6 rounded-full transition-colors duration-200 flex-shrink-0
-          ${checked ? 'bg-primary' : 'bg-surface border border-white/20'}`}
-      >
-        <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all duration-200
-          ${checked ? 'left-5' : 'left-0.5'}`} />
-      </button>
-    </div>
-  );
+  const noShopOpen = isAdmin && !effectiveShopId;
 
   return (
-    <Layout title={t('settings_title')}>
-      <div className="max-w-2xl mx-auto space-y-5">
-
-        {/* Exchange Rate */}
-        <Section title={t('settings_exchange_rate')}>
-          <div className="flex items-center gap-3 mb-4 p-3 bg-surface rounded-xl">
-            <div>
-              <p className="text-subtext text-xs">{t('settings_current_rate')}</p>
-              <p className="text-primary font-bold text-lg">1 USD = {(shop?.exchangeRate || 12500).toLocaleString()} UZS</p>
-            </div>
-          </div>
-          <div className="flex items-end gap-3">
-            <div className="flex-1">
-              <label className="block text-sm font-medium text-text-main mb-1.5">{t('settings_new_rate')}</label>
-              <input
-                type="number" min="1"
-                value={newRate}
-                onChange={(e) => setNewRate(e.target.value)}
-                placeholder="12500"
-              />
-            </div>
-            <button
-              onClick={handleUpdateRate}
-              disabled={saving}
-              className="px-4 py-2.5 bg-primary hover:bg-secondary text-dark font-bold text-sm rounded-lg transition-all disabled:opacity-50"
-            >
-              {saving ? t('common_loading') : t('settings_update_rate')}
-            </button>
-          </div>
-        </Section>
-
-        {/* Payment Types */}
-        <Section title={t('settings_payment_types')}>
-          <div className="space-y-2 mb-4">
-            {paymentTypes.map((pt) => (
-              <div key={pt.id} className="flex items-center gap-3 p-3 bg-surface rounded-lg">
-                <GripVertical size={14} className="text-subtext flex-shrink-0" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-text-main text-sm font-medium truncate">{pt.nameEn}</p>
-                  <p className="text-subtext text-xs truncate">{pt.nameUz}</p>
-                </div>
-                <button
-                  onClick={() => togglePayment(pt.id)}
-                  className={`relative w-10 h-5 rounded-full transition-colors duration-200 flex-shrink-0
-                    ${pt.isActive ? 'bg-primary' : 'bg-white/10'}`}
-                >
-                  <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-all
-                    ${pt.isActive ? 'left-5' : 'left-0.5'}`} />
-                </button>
-                <button
-                  onClick={() => removePayment(pt.id)}
-                  className="p-1 text-subtext hover:text-error transition-colors flex-shrink-0"
-                >
-                  <Trash2 size={14} />
-                </button>
-              </div>
-            ))}
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div>
-              <label className="block text-xs text-subtext mb-1">{t('settings_payment_name_uz')}</label>
-              <input type="text" value={newPaymentUz} onChange={(e) => setNewPaymentUz(e.target.value)} className="text-sm py-2" />
-            </div>
-            <div>
-              <label className="block text-xs text-subtext mb-1">{t('settings_payment_name_en')}</label>
-              <input type="text" value={newPaymentEn} onChange={(e) => setNewPaymentEn(e.target.value)} className="text-sm py-2" />
-            </div>
-            <div className="flex items-end">
-              <button
-                onClick={handleAddPayment}
-                className="w-full flex items-center justify-center gap-2 px-3 py-2.5 bg-surface border border-white/10
-                  text-subtext hover:text-text-main hover:border-white/20 text-sm rounded-lg transition-all"
-              >
-                <Plus size={14} />
-                {t('settings_add_payment')}
-              </button>
-            </div>
-          </div>
-        </Section>
-
-        {/* Shop Token */}
-        <Section title={t('settings_shop_token')}>
-          <div className="flex items-center gap-3 p-4 bg-surface rounded-xl mb-4">
-            <span className={`font-mono text-sm flex-1 tracking-widest ${showToken ? 'text-primary' : 'blur-sm select-none text-subtext'}`}>
-              {shop?.token || '—'}
-            </span>
-            <button
-              onClick={() => setShowToken((s) => !s)}
-              className="text-subtext hover:text-text-main p-1.5 rounded-lg transition-colors"
-            >
-              {showToken ? <EyeOff size={16} /> : <Eye size={16} />}
-            </button>
-            {showToken && (
-              <button onClick={copyToken} className="text-subtext hover:text-primary p-1.5 rounded-lg transition-colors">
-                <Copy size={16} />
-              </button>
-            )}
-          </div>
-          <button
-            onClick={() => setRegenModal(true)}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-orange-500/10 border border-orange-500/20
-              text-warning hover:bg-orange-500/20 text-sm transition-all"
-          >
-            <RefreshCw size={15} />
-            {t('settings_regen_token')}
-          </button>
-        </Section>
-
-        {/* Default Threshold + Notifications */}
-        <Section title={t('settings_notifications')}>
-          <div className="mb-5">
-            <label className="block text-sm font-medium text-text-main mb-1.5">{t('settings_default_threshold')}</label>
-            <input
-              type="number" min="0"
-              value={threshold}
-              onChange={(e) => setThreshold(e.target.value)}
-              className="max-w-[160px]"
-            />
-          </div>
-          <Toggle
-            label={t('settings_notify_orders')}
-            checked={notifications.newOrders}
-            onChange={() => setNotifications((n) => ({ ...n, newOrders: !n.newOrders }))}
+    <Layout title={t('wallpapers_title')}>
+      {noShopOpen && (
+        <div className="flex items-start gap-2 bg-primary/5 border border-primary/20 rounded-xl px-4 py-3 mb-4">
+          <AlertTriangle size={16} className="text-primary flex-shrink-0 mt-0.5" />
+          <p className="text-sm text-subtext">
+            Open a shop first (Shops page → Open) to view and manage its wallpapers.
+            Each shop's wallpapers are kept separate.
+          </p>
+        </div>
+      )}
+      {/* Filters */}
+      <div className="flex flex-wrap gap-3 mb-4">
+        <div className="relative flex-1 min-w-[200px]">
+          <input
+            type="text"
+            placeholder={t('wallpapers_search')}
+            value={filters.search}
+            onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))}
+            className="pl-4 text-sm py-2"
           />
-          <Toggle
-            label={t('settings_notify_low_stock')}
-            checked={notifications.lowStock}
-            onChange={() => setNotifications((n) => ({ ...n, lowStock: !n.lowStock }))}
-          />
-          <Toggle
-            label={t('settings_notify_bonuses')}
-            checked={notifications.bonuses}
-            onChange={() => setNotifications((n) => ({ ...n, bonuses: !n.bonuses }))}
-          />
-          <div className="mt-5">
-            <button
-              onClick={handleSaveNotifications}
-              disabled={saving}
-              className="px-5 py-2.5 bg-primary hover:bg-secondary text-dark font-bold text-sm rounded-lg transition-all disabled:opacity-50"
-            >
-              {saving ? t('common_loading') : t('settings_save')}
-            </button>
-          </div>
-        </Section>
+        </div>
+        <select
+          value={filters.categoryId}
+          onChange={(e) => setFilters((f) => ({ ...f, categoryId: e.target.value }))}
+          className="text-sm py-2 min-w-[160px]"
+        >
+          <option value="">{t('wallpapers_filter_category')}</option>
+          {categories.map((c) => (
+            <option key={c.id} value={c.id}>
+              {currentLang === 'uz' ? c.nameUz : c.nameEn}
+            </option>
+          ))}
+        </select>
+        <select
+          value={filters.status}
+          onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}
+          className="text-sm py-2 min-w-[160px]"
+        >
+          <option value="">{t('wallpapers_filter_status')}</option>
+          <option value="approved">{t('common_approved')}</option>
+          <option value="pending">{t('common_pending')}</option>
+          <option value="rejected">{t('common_rejected')}</option>
+        </select>
+        <button
+          onClick={() => router.push('/wallpapers/add')}
+          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary hover:bg-secondary
+            text-dark font-semibold text-sm transition-all hover:shadow-glow-sm"
+        >
+          <Plus size={16} />
+          {t('wallpapers_add')}
+        </button>
       </div>
 
+      <DataTable
+        columns={columns}
+        data={wallpapers}
+        loading={loading}
+        searchable={false}
+        keyField="id"
+      />
+
+      {/* Reject Modal */}
+      {rejectModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <div className="w-full max-w-md bg-card border border-white/10 rounded-2xl shadow-card animate-slide-up">
+            <div className="flex items-center justify-between p-6 border-b border-white/5">
+              <h2 className="text-text-main font-bold text-lg">{t('wallpapers_reject')}</h2>
+              <button onClick={() => setRejectModal(null)} className="text-subtext hover:text-text-main">✕</button>
+            </div>
+            <div className="p-6">
+              <p className="text-subtext text-sm mb-3">
+                {currentLang === 'uz' ? rejectModal.nameUz : rejectModal.nameEn}
+              </p>
+              <label className="block text-sm font-medium text-text-main mb-1.5">{t('wallpapers_reject_reason')}</label>
+              <textarea
+                rows={3}
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                placeholder={t('wallpapers_reject_reason_placeholder')}
+                className="resize-none"
+              />
+            </div>
+            <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-white/5">
+              <button onClick={() => setRejectModal(null)} className="px-4 py-2 text-sm text-subtext border border-white/10 rounded-lg">
+                {t('common_cancel')}
+              </button>
+              <button
+                onClick={handleReject}
+                disabled={actionLoading}
+                className="px-5 py-2 bg-error hover:bg-red-600 text-white font-bold text-sm rounded-lg transition-all disabled:opacity-50"
+              >
+                {actionLoading ? t('common_loading') : t('wallpapers_reject')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <ConfirmModal
-        isOpen={regenModal}
-        onClose={() => setRegenModal(false)}
-        onConfirm={handleRegenToken}
-        title={t('settings_regen_token')}
-        message={t('settings_regen_warning')}
+        isOpen={!!deleteModal}
+        onClose={() => setDeleteModal(null)}
+        onConfirm={handleDelete}
+        title={t('common_delete_title')}
+        message={t('common_delete_confirm')}
         danger
-        loading={regenLoading}
-        confirmText={t('settings_regen_token')}
+        loading={actionLoading}
       />
     </Layout>
   );
