@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Plus, Check, X, Edit, Trash2, Search } from 'lucide-react';
+import { Plus, Check, X, Edit, Trash2, Search, AlertTriangle } from 'lucide-react';
 import Layout from '../../components/Layout';
 import DataTable from '../../components/DataTable';
 import StatusBadge from '../../components/StatusBadge';
@@ -19,10 +19,16 @@ import toast from 'react-hot-toast';
 import Image from 'next/image';
 
 export default function WallpapersPage() {
-  const { shopId, currentUser, isAdmin } = useAuth();
+  const { shopId, shopOverride, currentUser, isAdmin } = useAuth();
   const { t, currentLang } = useLanguage();
   const { format } = useCurrency();
   const router = useRouter();
+
+  // ── Which shop are we managing?
+  // Shopkeeper: always their own. Admin: the shop opened via the Shops
+  // page / header switcher; if none opened, admin sees ALL wallpapers
+  // (useful as the global approval queue).
+  const effectiveShopId = isAdmin ? (shopOverride || null) : shopId;
 
   const [wallpapers, setWallpapers] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -34,14 +40,19 @@ export default function WallpapersPage() {
   const [actionLoading, setActionLoading] = useState(false);
 
   const fetchData = async () => {
+    // Admin must OPEN a shop first. Without it we show nothing — never a
+    // global all-shops list (that was the cross-shop "bleed" bug).
+    if (isAdmin && !effectiveShopId) {
+      setWallpapers([]);
+      setCategories([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
-      // For admin, pass null shopId to get all wallpapers
-      const effectiveShopId = isAdmin ? null : shopId;
       const [wp, cats] = await Promise.all([
         getAllWallpapers(effectiveShopId, filters),
-        // For categories: if admin, get all categories (no shop filter); else filter by shopId
-        getDocs(query(collection(db, 'categories'), ...(isAdmin ? [] : [where('shopId', '==', shopId)]))),
+        getDocs(query(collection(db, 'categories'), where('shopId', '==', effectiveShopId))),
       ]);
       setWallpapers(wp);
       setCategories(cats.docs.map((d) => ({ id: d.id, ...d.data() })));
@@ -50,7 +61,7 @@ export default function WallpapersPage() {
     }
   };
 
-  useEffect(() => { fetchData(); }, [shopId, filters, isAdmin]);
+  useEffect(() => { fetchData(); }, [effectiveShopId, filters, isAdmin]);
 
   const handleApprove = async (id) => {
     setActionLoading(true);
@@ -189,8 +200,19 @@ export default function WallpapersPage() {
     },
   ];
 
+  const noShopOpen = isAdmin && !effectiveShopId;
+
   return (
     <Layout title={t('wallpapers_title')}>
+      {noShopOpen && (
+        <div className="flex items-start gap-2 bg-primary/5 border border-primary/20 rounded-xl px-4 py-3 mb-4">
+          <AlertTriangle size={16} className="text-primary flex-shrink-0 mt-0.5" />
+          <p className="text-sm text-subtext">
+            Open a shop first (Shops page → Open) to view and manage its wallpapers.
+            Each shop's wallpapers are kept separate.
+          </p>
+        </div>
+      )}
       {/* Filters */}
       <div className="flex flex-wrap gap-3 mb-4">
         <div className="relative flex-1 min-w-[200px]">
