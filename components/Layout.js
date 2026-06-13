@@ -16,26 +16,31 @@ import { collection, query, where, onSnapshot, getDocs } from 'firebase/firestor
 import { db } from '../lib/firebase';
 import toast from 'react-hot-toast';
 
+// scope:
+//   'always'      → always visible (dashboard)
+//   'admin'       → admin-only, always (shops, settings)
+//   'shopScoped'  → belongs to a specific shop: shopkeepers always see it;
+//                   admins see it ONLY after opening a shop (shopOverride set)
 const NAV_ITEMS = [
-  { key: 'dashboard', href: '/dashboard', icon: LayoutDashboard, labelKey: 'nav_dashboard', adminOnly: false },
-  { key: 'shops', href: '/shops', icon: Store, labelKey: 'nav_shops', adminOnly: true },
-  { key: 'wallpapers', href: '/wallpapers', icon: Image, labelKey: 'nav_wallpapers', adminOnly: false },
-  { key: 'categories', href: '/categories', icon: Tag, labelKey: 'nav_categories', adminOnly: false },
-  { key: 'orders', href: '/orders', icon: ShoppingBag, labelKey: 'nav_orders', adminOnly: false },
-  { key: 'sales', href: '/sales', icon: Receipt, labelKey: 'nav_sales', adminOnly: false },
-  { key: 'employees', href: '/employees', icon: Users, labelKey: 'nav_employees', adminOnly: false },
-  { key: 'craftsmen', href: '/craftsmen', icon: Hammer, labelKey: 'nav_craftsmen', adminOnly: false },
-  { key: 'warehouse', href: '/warehouse', icon: Warehouse, labelKey: 'nav_warehouse', adminOnly: false },
-  { key: 'suppliers', href: '/suppliers', icon: Truck, labelKey: 'nav_suppliers', adminOnly: false },
-  { key: 'reports', href: '/reports', icon: BarChart3, labelKey: 'nav_reports', adminOnly: false },
-  { key: 'branches', href: '/branches', icon: GitBranch, labelKey: 'nav_branches', adminOnly: false },
-  { key: 'settings', href: '/settings', icon: Settings, labelKey: 'nav_settings', adminOnly: true },
+  { key: 'dashboard', href: '/dashboard', icon: LayoutDashboard, labelKey: 'nav_dashboard', scope: 'always' },
+  { key: 'shops', href: '/shops', icon: Store, labelKey: 'nav_shops', scope: 'admin' },
+  { key: 'wallpapers', href: '/wallpapers', icon: Image, labelKey: 'nav_wallpapers', scope: 'shopScoped' },
+  { key: 'categories', href: '/categories', icon: Tag, labelKey: 'nav_categories', scope: 'shopScoped' },
+  { key: 'orders', href: '/orders', icon: ShoppingBag, labelKey: 'nav_orders', scope: 'shopScoped' },
+  { key: 'sales', href: '/sales', icon: Receipt, labelKey: 'nav_sales', scope: 'shopScoped' },
+  { key: 'employees', href: '/employees', icon: Users, labelKey: 'nav_employees', scope: 'shopScoped' },
+  { key: 'craftsmen', href: '/craftsmen', icon: Hammer, labelKey: 'nav_craftsmen', scope: 'shopScoped' },
+  { key: 'warehouse', href: '/warehouse', icon: Warehouse, labelKey: 'nav_warehouse', scope: 'shopScoped' },
+  { key: 'suppliers', href: '/suppliers', icon: Truck, labelKey: 'nav_suppliers', scope: 'shopScoped' },
+  { key: 'reports', href: '/reports', icon: BarChart3, labelKey: 'nav_reports', scope: 'shopScoped' },
+  { key: 'branches', href: '/branches', icon: GitBranch, labelKey: 'nav_branches', scope: 'shopScoped' },
+  { key: 'settings', href: '/settings', icon: Settings, labelKey: 'nav_settings', scope: 'admin' },
 ];
 
 export default function Layout({ children, title }) {
   const pathname = usePathname();
   const router = useRouter();
-  const { userDoc, isAdmin, shopId, baseShopId, shopOverride, setShopOverride } = useAuth();
+  const { userDoc, isAdmin, shopId, shopOverride, setShopOverride } = useAuth();
   const { t, currentLang, toggleLanguage } = useLanguage();
   const { currentCurrency, toggleCurrency } = useCurrency();
   const [collapsed, setCollapsed] = useState(false);
@@ -55,7 +60,7 @@ export default function Layout({ children, title }) {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // ── Admin shop switcher: load the full shop list once for the dropdown.
+  // Admin shop switcher: load the full shop list once for the dropdown.
   useEffect(() => {
     if (!isAdmin) return;
     let cancelled = false;
@@ -99,7 +104,23 @@ export default function Layout({ children, title }) {
     toast.success('Logged out successfully');
   };
 
-  const visibleItems = NAV_ITEMS.filter((item) => !item.adminOnly || isAdmin);
+  // ── Sidebar visibility rule ──
+  // - 'always'     → everyone
+  // - 'admin'      → admins only
+  // - 'shopScoped' → shopkeepers always; admins ONLY when a shop is opened
+  const adminHasShopOpen = isAdmin && !!shopOverride;
+  const visibleItems = NAV_ITEMS.filter((item) => {
+    if (item.scope === 'always') return true;
+    if (item.scope === 'admin') return isAdmin;
+    if (item.scope === 'shopScoped') {
+      if (!isAdmin) return true;        // shopkeeper: always
+      return adminHasShopOpen;          // admin: only inside an opened shop
+    }
+    return false;
+  });
+
+  const currentShopName =
+    allShops.find((s) => s.id === shopOverride)?.name || null;
 
   const NavItem = ({ item }) => {
     const Icon = item.icon;
@@ -145,6 +166,20 @@ export default function Layout({ children, title }) {
         )}
       </div>
 
+      {/* Admin: which shop is open */}
+      {!collapsed && isAdmin && adminHasShopOpen && (
+        <div className="mx-2 mt-3 mb-1 px-3 py-2 rounded-lg bg-primary/10 border border-primary/20">
+          <p className="text-[10px] text-subtext uppercase tracking-wide">Managing shop</p>
+          <p className="text-sm text-primary font-semibold truncate">{currentShopName}</p>
+          <button
+            onClick={() => { setShopOverride(null); router.push('/shops'); }}
+            className="text-[11px] text-subtext hover:text-text-main mt-1"
+          >
+            ← Exit shop
+          </button>
+        </div>
+      )}
+
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto py-3 space-y-0">
         {visibleItems.map((item) => (
@@ -181,6 +216,18 @@ export default function Layout({ children, title }) {
                 <X size={20} />
               </button>
             </div>
+            {isAdmin && adminHasShopOpen && (
+              <div className="mx-2 mt-3 px-3 py-2 rounded-lg bg-primary/10 border border-primary/20">
+                <p className="text-[10px] text-subtext uppercase tracking-wide">Managing shop</p>
+                <p className="text-sm text-primary font-semibold truncate">{currentShopName}</p>
+                <button
+                  onClick={() => { setShopOverride(null); setMobileOpen(false); router.push('/shops'); }}
+                  className="text-[11px] text-subtext hover:text-text-main mt-1"
+                >
+                  ← Exit shop
+                </button>
+              </div>
+            )}
             <nav className="flex-1 overflow-y-auto py-3">
               {visibleItems.map((item) => (
                 <NavItem key={item.key} item={item} />
@@ -206,8 +253,7 @@ export default function Layout({ children, title }) {
           </div>
 
           <div className="flex items-center gap-2">
-            {/* ── Admin shop switcher: every page (wallpapers, categories,
-                 warehouse, sales...) operates on the selected shop. ── */}
+            {/* Admin shop switcher */}
             {isAdmin && allShops.length > 0 && (
               <div className="flex items-center gap-1.5 px-2 py-1 rounded-full bg-surface
                 border border-primary/30">
@@ -219,7 +265,7 @@ export default function Layout({ children, title }) {
                     text-primary focus:ring-0 cursor-pointer max-w-[130px] truncate"
                 >
                   <option value="" className="bg-card text-text-main">
-                    {currentLang === 'uz' ? 'Mening do\'konim' : 'My shop'}
+                    {currentLang === 'uz' ? 'Do\'kon tanlang' : 'No shop open'}
                   </option>
                   {allShops.map((s) => (
                     <option key={s.id} value={s.id} className="bg-card text-text-main">
