@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Plus, Trash2, Search, X, Check } from 'lucide-react';
+import { Plus, Trash2, Search, X, Check, AlertTriangle } from 'lucide-react';
 import Layout from '../../../components/Layout';
 import ConfirmModal from '../../../components/ConfirmModal';
 import { useAuth } from '../../../context/AuthContext';
@@ -16,11 +16,9 @@ import { collection, getDocs, query, where, doc, getDoc } from 'firebase/firesto
 import { db } from '../../../lib/firebase';
 import toast from 'react-hot-toast';
 
-// ─────────────────────────────────────────────────────────────────────────
 // Mobile app orders carry an items[] array (one entry per scanned wall).
 // Several walls can use the SAME wallpaper — for the sale we merge those
 // into one line, summing sqm. Legacy flat-field orders still work.
-// ─────────────────────────────────────────────────────────────────────────
 function getOrderItemsMergedByWallpaper(order) {
   let rawItems = [];
   if (Array.isArray(order.items) && order.items.length > 0) {
@@ -43,11 +41,17 @@ function getOrderItemsMergedByWallpaper(order) {
 }
 
 function NewSaleContent() {
-  const { shopId, currentUser, userDoc } = useAuth();
+  const { shopId, shopOverride, isAdmin, currentUser, userDoc } = useAuth();
   const { t } = useLanguage();
   const { format } = useCurrency();
   const router = useRouter();
   const searchParams = useSearchParams();
+
+  // ★ The shop this sale belongs to. Admin: the OPENED shop. Shopkeeper: own.
+  // Without this, an admin-converted sale was written with shopId:"admin" and
+  // vanished from every shop's dashboard. This is the core reports fix.
+  const effectiveShopId = isAdmin ? (shopOverride || null) : shopId;
+  const noShopOpen = isAdmin && !effectiveShopId;
 
   const [wallpapers, setWallpapers] = useState([]);
   const [craftsmen, setCraftsmen] = useState([]);
@@ -65,16 +69,16 @@ function NewSaleContent() {
   const [orderId] = useState(searchParams.get('orderId'));
 
   useEffect(() => {
-    if (!shopId) return;
+    if (!effectiveShopId) return;
     const load = async () => {
       const [wps, crafts] = await Promise.all([
-        getAllWallpapers(shopId),
-        getAllCraftsmen(shopId),
+        getAllWallpapers(effectiveShopId),
+        getAllCraftsmen(effectiveShopId),
       ]);
       setWallpapers(wps.filter((w) => w.approvalStatus === 'approved' && w.stock > 0));
       setCraftsmen(crafts);
 
-      const shopDoc = await getDoc(doc(db, 'shops', shopId));
+      const shopDoc = await getDoc(doc(db, 'shops', effectiveShopId));
       const shopData = shopDoc.data();
       setPaymentTypes(
         (shopData?.paymentTypes || [{ id: 'cash', nameEn: 'Cash', nameUz: 'Naqd', isActive: true }]).filter((p) => p.isActive)
@@ -83,12 +87,9 @@ function NewSaleContent() {
         (shopData?.paymentTypes || [{ id: 'cash' }]).filter((p) => p.isActive).map((p) => [p.id, ''])
       ));
 
-      // ──────────────────────────────────────────────────────────────────
-      // Order → sale conversion. Reads the items[] array from mobile app
-      // orders (one entry per wall, merged by wallpaper). Rolls + prices
-      // are recomputed HERE with current dashboard data — the scanner's
-      // estimate is never trusted as the sale price (TZ: scanner ≠ sale).
-      // ──────────────────────────────────────────────────────────────────
+      // Order → sale conversion. Reads items[] from the mobile order, merged
+      // by wallpaper. Rolls + prices recomputed HERE with current dashboard
+      // data — the scanner estimate is never trusted as the sale (scanner ≠ sale).
       if (orderId) {
         const orderSnap = await getDoc(doc(db, 'orders', orderId));
         if (orderSnap.exists()) {
@@ -98,7 +99,7 @@ function NewSaleContent() {
 
           for (const oi of mergedItems) {
             const wp = wps.find((w) => w.id === oi.wallpaperId);
-            if (!wp) continue; // wallpaper deleted or belongs to other shop
+            if (!wp) continue;
             const sqm = Number(oi.sqm) || 0;
             if (sqm <= 0) continue;
             const rolls = sqmToRolls(sqm, wp.rollWidthCm, wp.rollLengthM, 0);
@@ -128,7 +129,7 @@ function NewSaleContent() {
       }
     };
     load();
-  }, [shopId, orderId]);
+  }, [effectiveShopId, orderId]);
 
   const subtotal = items.reduce((s, i) => s + (i.total || 0), 0);
   const totalAmount = subtotal;
@@ -172,13 +173,14 @@ function NewSaleContent() {
 
   const handleClose = async () => {
     if (!canClose) return;
+    if (!effectiveShopId) { toast.error('Open a shop first'); return; }
     setClosing(true);
     try {
       const totalCost = items.reduce((s, i) => s + i.rolls * (i.costPrice || 0), 0);
       const totalSqm = items.reduce((s, i) => s + (i.sqm || 0), 0);
       const sellerName = userDoc?.name || userDoc?.email || '';
 
-      const { id: saleId } = await createSale(shopId, {
+      const { id: saleId } = await createSale(effectiveShopId, {
         items: items.map((i) => ({
           wallpaperId: i.wallpaperId,
           wallpaperName: i.wallpaperName,
@@ -200,7 +202,7 @@ function NewSaleContent() {
         branchId: userDoc?.branchId || null,
       }, currentUser.uid);
 
-      await closeSale(saleId, shopId, currentUser.uid);
+      await closeSale(saleId, effectiveShopId, currentUser.uid);
       toast.success(t('sales_close_success'));
       router.push(`/sales/${saleId}`);
     } catch (err) {
@@ -219,6 +221,26 @@ function NewSaleContent() {
     const q = searchQuery.toLowerCase();
     return !q || w.nameEn?.toLowerCase().includes(q) || w.nameUz?.toLowerCase().includes(q);
   });
+
+  // Admin with no shop open → block the whole page so a sale can never be
+  // written under shopId:"admin".
+  if (noShopOpen) {
+    return (
+      <Layout title={t('sales_new')}>
+        <div className="max-w-xl mx-auto mt-10 bg-card border border-primary/20 rounded-2xl p-8 text-center">
+          <AlertTriangle size={36} className="text-primary mx-auto mb-4" />
+          <h2 className="text-text-main font-bold text-lg mb-2">Open a shop first</h2>
+          <p className="text-subtext text-sm mb-6">
+            To record a sale, open the shop it belongs to from the Shops page. This keeps every
+            sale correctly tied to its shop.
+          </p>
+          <button onClick={() => router.push('/shops')} className="px-6 py-2.5 bg-primary hover:bg-secondary text-dark font-bold text-sm rounded-lg transition-all">
+            Go to Shops
+          </button>
+        </div>
+      </Layout>
+    );
+  }
 
   return (
     <Layout title={t('sales_new')}>
