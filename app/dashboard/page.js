@@ -36,10 +36,13 @@ const CustomTooltip = ({ active, payload, label, format }) => {
 };
 
 export default function DashboardPage() {
-  const { shopId, loading: authLoading } = useAuth();
+  const { shopId, shopOverride, isAdmin, loading: authLoading } = useAuth();
   const { t } = useLanguage();
   const { format } = useCurrency();
   const router = useRouter();
+
+  // ★ Use the OPENED shop for admins (shopOverride); shopkeepers use their own.
+  const effectiveShopId = isAdmin ? (shopOverride || null) : shopId;
 
   const [stats, setStats] = useState(null);
   const [chartData, setChartData] = useState([]);
@@ -48,32 +51,38 @@ export default function DashboardPage() {
   const [recentOrders, setRecentOrders] = useState([]);
   const [loading, setLoading] = useState(true);
 
+  const noShopOpen = isAdmin && !effectiveShopId;
+
   useEffect(() => {
-    if (authLoading || !shopId) return;
+    if (authLoading) return;
+    // Admin must open a shop first — otherwise there's no scope to show.
+    if (noShopOpen) {
+      setStats(null); setChartData([]); setTopWallpapers([]);
+      setLowStock([]); setRecentOrders([]); setLoading(false);
+      return;
+    }
+    if (!effectiveShopId) return;
 
     const load = async () => {
       setLoading(true);
       try {
-        const [todayStats, chart, low, orders] = await Promise.all([
-          getTodaySalesSummary(shopId),
-          getLast30DaysSales(shopId),
-          getLowStockWallpapers(shopId),
-          getAllOrders(shopId, { status: 'pending' }),
+        const [todayStats, chart, low] = await Promise.all([
+          getTodaySalesSummary(effectiveShopId),
+          getLast30DaysSales(effectiveShopId),
+          getLowStockWallpapers(effectiveShopId),
         ]);
 
         setStats(todayStats);
         setChartData(chart);
         setLowStock(low.slice(0, 5));
 
-        // Get recent orders (all, last 5)
-        const allOrders = await getAllOrders(shopId);
+        const allOrders = await getAllOrders(effectiveShopId);
         setRecentOrders(allOrders.slice(0, 5));
 
-        // Top selling wallpapers from chart/sales
         const salesSnap = await getDocs(
           query(
             collection(db, 'sales'),
-            where('shopId', '==', shopId),
+            where('shopId', '==', effectiveShopId),
             where('status', '==', 'closed')
           )
         );
@@ -100,10 +109,19 @@ export default function DashboardPage() {
     };
 
     load();
-  }, [shopId, authLoading]);
+  }, [effectiveShopId, authLoading, noShopOpen]);
 
   return (
     <Layout title={t('dashboard_title')}>
+      {noShopOpen && (
+        <div className="flex items-start gap-2 bg-primary/5 border border-primary/20 rounded-xl px-4 py-3 mb-6">
+          <AlertTriangle size={16} className="text-primary flex-shrink-0 mt-0.5" />
+          <p className="text-sm text-subtext">
+            Open a shop first (Shops page → Open) to see its dashboard, sales, and analytics.
+          </p>
+        </div>
+      )}
+
       {/* Stat cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
         <StatCard
@@ -141,7 +159,6 @@ export default function DashboardPage() {
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 mb-4">
-        {/* Sales chart */}
         <div className="xl:col-span-2 bg-card border border-white/5 rounded-xl p-5">
           <div className="flex items-center justify-between mb-5">
             <h2 className="text-text-main font-semibold">{t('dashboard_sales_chart')}</h2>
@@ -180,7 +197,6 @@ export default function DashboardPage() {
           )}
         </div>
 
-        {/* Low stock alerts */}
         <div className="bg-card border border-white/5 rounded-xl p-5">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-text-main font-semibold flex items-center gap-2">
@@ -229,7 +245,6 @@ export default function DashboardPage() {
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-        {/* Top wallpapers */}
         <div className="bg-card border border-white/5 rounded-xl p-5">
           <h2 className="text-text-main font-semibold mb-4">{t('dashboard_top_wallpapers')}</h2>
           {loading ? (
@@ -264,7 +279,6 @@ export default function DashboardPage() {
           )}
         </div>
 
-        {/* Recent orders */}
         <div className="bg-card border border-white/5 rounded-xl p-5">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-text-main font-semibold">{t('dashboard_recent_orders')}</h2>
