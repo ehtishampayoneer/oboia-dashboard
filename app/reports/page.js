@@ -5,7 +5,7 @@ import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
-import { FileDown, FileSpreadsheet, TrendingUp, Package, Users, CreditCard } from 'lucide-react';
+import { FileDown, FileSpreadsheet, TrendingUp, Package, Users, CreditCard, AlertTriangle } from 'lucide-react';
 import Layout from '../../components/Layout';
 import StatCard from '../../components/StatCard';
 import { useAuth } from '../../context/AuthContext';
@@ -29,9 +29,13 @@ const CustomTooltip = ({ active, payload, label, format }) => {
 };
 
 export default function ReportsPage() {
-  const { shopId } = useAuth();
+  const { shopId, shopOverride, isAdmin } = useAuth();
   const { t } = useLanguage();
   const { format } = useCurrency();
+
+  // ★ Use the OPENED shop for admins; shopkeepers use their own.
+  const effectiveShopId = isAdmin ? (shopOverride || null) : shopId;
+  const noShopOpen = isAdmin && !effectiveShopId;
 
   const [branches, setBranches] = useState([]);
   const [dateFrom, setDateFrom] = useState(() => {
@@ -47,17 +51,18 @@ export default function ReportsPage() {
   const [activeTab, setActiveTab] = useState('product');
 
   useEffect(() => {
-    if (!shopId) return;
-    getDocs(query(collection(db, 'branches'), where('shopId', '==', shopId))).then((snap) => {
+    if (!effectiveShopId) { setBranches([]); return; }
+    getDocs(query(collection(db, 'branches'), where('shopId', '==', effectiveShopId))).then((snap) => {
       setBranches(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     });
-  }, [shopId]);
+  }, [effectiveShopId]);
 
   const handleGenerate = async () => {
+    if (noShopOpen) { toast.error('Open a shop first (Shops page → Open)'); return; }
     if (!dateFrom || !dateTo) { toast.error('Select date range'); return; }
     setGenerating(true);
     try {
-      const data = await generateReport(shopId, dateFrom, dateTo, branchId || null);
+      const data = await generateReport(effectiveShopId, dateFrom, dateTo, branchId || null);
       setReport(data);
     } catch (err) {
       toast.error('Failed to generate report');
@@ -99,6 +104,15 @@ export default function ReportsPage() {
 
   return (
     <Layout title={t('reports_title')}>
+      {noShopOpen && (
+        <div className="flex items-start gap-2 bg-primary/5 border border-primary/20 rounded-xl px-4 py-3 mb-5">
+          <AlertTriangle size={16} className="text-primary flex-shrink-0 mt-0.5" />
+          <p className="text-sm text-subtext">
+            Open a shop first (Shops page → Open) to generate its reports.
+          </p>
+        </div>
+      )}
+
       {/* Controls */}
       <div className="bg-card border border-white/5 rounded-xl p-5 mb-5">
         <div className="flex flex-wrap items-end gap-3">
@@ -119,7 +133,7 @@ export default function ReportsPage() {
           </div>
           <button
             onClick={handleGenerate}
-            disabled={generating}
+            disabled={generating || noShopOpen}
             className="px-5 py-2 bg-primary hover:bg-secondary text-dark font-bold text-sm rounded-lg
               transition-all hover:shadow-glow-sm disabled:opacity-50 flex items-center gap-2"
           >
@@ -174,7 +188,6 @@ export default function ReportsPage() {
 
           {/* Charts row */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-            {/* Daily revenue */}
             <div className="bg-card border border-white/5 rounded-xl p-5">
               <h3 className="text-text-main font-semibold text-sm mb-4">{t('reports_daily_revenue')}</h3>
               <ResponsiveContainer width="100%" height={200}>
@@ -188,7 +201,6 @@ export default function ReportsPage() {
               </ResponsiveContainer>
             </div>
 
-            {/* Payment types pie */}
             <div className="bg-card border border-white/5 rounded-xl p-5">
               <h3 className="text-text-main font-semibold text-sm mb-4">{t('reports_payment_types')}</h3>
               <ResponsiveContainer width="100%" height={200}>
@@ -203,7 +215,6 @@ export default function ReportsPage() {
               </ResponsiveContainer>
             </div>
 
-            {/* Top products bar */}
             <div className="bg-card border border-white/5 rounded-xl p-5">
               <h3 className="text-text-main font-semibold text-sm mb-4">{t('reports_top_products')}</h3>
               <ResponsiveContainer width="100%" height={200}>
@@ -217,7 +228,6 @@ export default function ReportsPage() {
               </ResponsiveContainer>
             </div>
 
-            {/* Online vs Offline */}
             <div className="bg-card border border-white/5 rounded-xl p-5">
               <h3 className="text-text-main font-semibold text-sm mb-4">{t('reports_online_offline')}</h3>
               <ResponsiveContainer width="100%" height={200}>
@@ -326,7 +336,7 @@ export default function ReportsPage() {
         </div>
       )}
 
-      {!report && !generating && (
+      {!report && !generating && !noShopOpen && (
         <div className="flex flex-col items-center justify-center h-64 text-center">
           <TrendingUp size={48} className="text-subtext/30 mb-4" />
           <p className="text-subtext">{t('reports_generate')} to see analytics</p>
