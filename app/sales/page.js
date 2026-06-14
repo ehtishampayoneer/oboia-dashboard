@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Plus, Download, FileText } from 'lucide-react';
+import { Plus, Download, FileText, AlertTriangle } from 'lucide-react';
 import Layout from '../../components/Layout';
 import DataTable from '../../components/DataTable';
 import StatusBadge from '../../components/StatusBadge';
@@ -15,10 +15,14 @@ import { exportToExcel } from '../../lib/db/reports';
 import toast from 'react-hot-toast';
 
 export default function SalesPage() {
-  const { shopId, isAdmin } = useAuth();
+  const { shopId, shopOverride, isAdmin } = useAuth();
   const { t } = useLanguage();
   const { format } = useCurrency();
   const router = useRouter();
+
+  // ★ Admin uses the OPENED shop (not null = all shops). Shopkeeper: own shop.
+  const effectiveShopId = isAdmin ? (shopOverride || null) : shopId;
+  const noShopOpen = isAdmin && !effectiveShopId;
 
   const [sales, setSales] = useState([]);
   const [employees, setEmployees] = useState([]);
@@ -29,12 +33,15 @@ export default function SalesPage() {
   const [exporting, setExporting] = useState(false);
 
   const fetchData = async () => {
+    if (noShopOpen) {
+      setSales([]); setEmployees([]); setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
-      const effectiveShopId = isAdmin ? null : shopId;
       const [salesData, emps] = await Promise.all([
         getAllSales(effectiveShopId, filters),
-        getAllEmployees(isAdmin ? null : shopId),
+        getAllEmployees(effectiveShopId),
       ]);
       setSales(salesData);
       setEmployees(emps);
@@ -43,7 +50,7 @@ export default function SalesPage() {
     }
   };
 
-  useEffect(() => { fetchData(); }, [shopId, filters, isAdmin]);
+  useEffect(() => { fetchData(); }, [effectiveShopId, filters, isAdmin]);
 
   const totalRevenue = sales.reduce((s, r) => s + (r.totalAmount || 0), 0);
   const totalProfit = sales.reduce((s, r) => s + ((r.totalAmount || 0) - (r.totalCost || 0)), 0);
@@ -134,6 +141,15 @@ export default function SalesPage() {
 
   return (
     <Layout title={t('sales_title')}>
+      {noShopOpen && (
+        <div className="flex items-start gap-2 bg-primary/5 border border-primary/20 rounded-xl px-4 py-3 mb-4">
+          <AlertTriangle size={16} className="text-primary flex-shrink-0 mt-0.5" />
+          <p className="text-sm text-subtext">
+            Open a shop first (Shops page → Open) to view and record its sales.
+          </p>
+        </div>
+      )}
+
       {/* Filters */}
       <div className="flex flex-wrap gap-3 mb-4">
         <input
@@ -170,8 +186,9 @@ export default function SalesPage() {
           </button>
           <button
             onClick={() => router.push('/sales/new')}
+            disabled={noShopOpen}
             className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary hover:bg-secondary
-              text-dark font-semibold text-sm transition-all hover:shadow-glow-sm"
+              text-dark font-semibold text-sm transition-all hover:shadow-glow-sm disabled:opacity-50"
           >
             <Plus size={16} />
             {t('sales_new')}
