@@ -1,14 +1,15 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Plus, Coins, History } from 'lucide-react';
+import { Plus, Coins, History, Trash2 } from 'lucide-react';
 import Layout from '../../components/Layout';
 import DataTable from '../../components/DataTable';
 import StatusBadge from '../../components/StatusBadge';
+import ConfirmModal from '../../components/ConfirmModal';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { useCurrency } from '../../context/CurrencyContext';
-import { getAllCraftsmen, addCraftsman, payBonus, getBonusHistory } from '../../lib/db/craftsmen';
+import { getAllCraftsmen, addCraftsman, payBonus, getBonusHistory, deleteCraftsman } from '../../lib/db/craftsmen';
 import toast from 'react-hot-toast';
 
 export default function CraftsmenPage() {
@@ -25,6 +26,9 @@ export default function CraftsmenPage() {
   const [payAmount, setPayAmount] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
   const [form, setForm] = useState({ name: '', phone: '' });
+  // ── Delete (matches the shops page pattern) ──────────────────────────
+  const [deleteModal, setDeleteModal] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
   const fetchData = async () => {
     setLoading(true);
@@ -73,6 +77,27 @@ export default function CraftsmenPage() {
       toast.error(err.message === 'AMOUNT_EXCEEDS_BALANCE' ? 'Amount exceeds pending balance' : t('common_error'));
     } finally {
       setActionLoading(false);
+    }
+  };
+
+  // ── Delete a craftsman. The db layer refuses if a bonus is still pending;
+  //    we translate that into a clear "pay the pending bonus first" message.
+  const handleDelete = async () => {
+    if (!deleteModal) return;
+    setDeleting(true);
+    try {
+      await deleteCraftsman(deleteModal.id);
+      toast.success(t('common_success'));
+      setDeleteModal(null);
+      fetchData();
+    } catch (e) {
+      if (e?.message === 'HAS_PENDING_BALANCE') {
+        toast.error(t('delete_clear_bonus_first'));
+      } else {
+        toast.error(t('common_error'));
+      }
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -129,6 +154,13 @@ export default function CraftsmenPage() {
             title={t('craftsmen_transaction_history')}
           >
             <History size={14} />
+          </button>
+          <button
+            onClick={() => setDeleteModal(row)}
+            className="p-1.5 rounded-lg bg-red-500/10 text-error hover:bg-red-500/20 transition-all"
+            title={t('common_delete')}
+          >
+            <Trash2 size={14} />
           </button>
         </div>
       ),
@@ -249,6 +281,18 @@ export default function CraftsmenPage() {
           </div>
         </div>
       )}
+
+      {/* Delete Craftsman Confirmation (matches shops page) */}
+      <ConfirmModal
+        isOpen={!!deleteModal}
+        onClose={() => setDeleteModal(null)}
+        onConfirm={handleDelete}
+        title={t('common_delete_title')}
+        message={`${deleteModal?.name || ''} — ${t('common_delete_confirm')} ${t('common_cannot_undo')}`}
+        danger
+        loading={deleting}
+        confirmText={t('common_delete')}
+      />
     </Layout>
   );
 }
