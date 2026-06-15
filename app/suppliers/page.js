@@ -1,15 +1,16 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Plus, CreditCard, History, Package } from 'lucide-react';
+import { Plus, CreditCard, History, Package, Trash2 } from 'lucide-react';
 import Layout from '../../components/Layout';
 import DataTable from '../../components/DataTable';
+import ConfirmModal from '../../components/ConfirmModal';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { useCurrency } from '../../context/CurrencyContext';
 import {
   getAllSuppliers, addSupplier, recordPayment,
-  getSupplierTransactions, getSupplierProducts,
+  getSupplierTransactions, getSupplierProducts, deleteSupplier,
 } from '../../lib/db/suppliers';
 import StatusBadge from '../../components/StatusBadge';
 import toast from 'react-hot-toast';
@@ -29,6 +30,9 @@ export default function SuppliersPage() {
   const [payAmount, setPayAmount] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
   const [form, setForm] = useState({ name: '', phone: '', address: '' });
+  // ── Delete (matches the shops page pattern) ──────────────────────────
+  const [deleteModal, setDeleteModal] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
   const fetchData = async () => {
     setLoading(true);
@@ -73,6 +77,27 @@ export default function SuppliersPage() {
       toast.error(t('common_error'));
     } finally {
       setActionLoading(false);
+    }
+  };
+
+  // ── Delete a supplier. The db layer refuses if debt is outstanding;
+  //    we translate that into a clear "clear the debt first" message.
+  const handleDelete = async () => {
+    if (!deleteModal) return;
+    setDeleting(true);
+    try {
+      await deleteSupplier(deleteModal.id);
+      toast.success(t('common_success'));
+      setDeleteModal(null);
+      fetchData();
+    } catch (e) {
+      if (e?.message === 'HAS_OUTSTANDING_DEBT') {
+        toast.error(t('delete_clear_debt_first'));
+      } else {
+        toast.error(t('common_error'));
+      }
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -133,6 +158,15 @@ export default function SuppliersPage() {
           >
             <CreditCard size={13} />
             {t('suppliers_record_payment')}
+          </button>
+          <button
+            onClick={() => setDeleteModal(row)}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-lg
+              bg-red-500/10 text-error hover:bg-red-500/20 transition-all"
+            title={t('common_delete')}
+          >
+            <Trash2 size={13} />
+            {t('common_delete')}
           </button>
         </div>
       ),
@@ -274,6 +308,18 @@ export default function SuppliersPage() {
           </div>
         </div>
       )}
+
+      {/* Delete Supplier Confirmation (matches shops page) */}
+      <ConfirmModal
+        isOpen={!!deleteModal}
+        onClose={() => setDeleteModal(null)}
+        onConfirm={handleDelete}
+        title={t('common_delete_title')}
+        message={`${deleteModal?.name || ''} — ${t('common_delete_confirm')} ${t('common_cannot_undo')}`}
+        danger
+        loading={deleting}
+        confirmText={t('common_delete')}
+      />
     </Layout>
   );
 }
