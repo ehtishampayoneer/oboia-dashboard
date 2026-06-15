@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Plus, Shield, ShieldOff, BarChart2 } from 'lucide-react';
+import { Plus, Shield, ShieldOff, BarChart2, Trash2 } from 'lucide-react';
 import Layout from '../../components/Layout';
 import DataTable from '../../components/DataTable';
 import StatusBadge from '../../components/StatusBadge';
@@ -9,7 +9,7 @@ import ConfirmModal from '../../components/ConfirmModal';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
 import { useCurrency } from '../../context/CurrencyContext';
-import { getAllEmployees, addEmployee, toggleBlock, getEmployeePerformance } from '../../lib/db/employees';
+import { getAllEmployees, addEmployee, toggleBlock, getEmployeePerformance, deleteEmployee } from '../../lib/db/employees';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../../lib/firebase';
 import toast from 'react-hot-toast';
@@ -27,6 +27,9 @@ export default function EmployeesPage() {
   const [perfData, setPerfData] = useState(null);
   const [blockModal, setBlockModal] = useState(null);
   const [actionLoading, setActionLoading] = useState(false);
+  // ── Delete (matches the shops page pattern) ──────────────────────────
+  const [deleteModal, setDeleteModal] = useState(null);
+  const [deleting, setDeleting] = useState(false);
 
   const [form, setForm] = useState({
     name: '', email: '', phone: '', password: '', role: 'seller', branchId: '',
@@ -81,6 +84,24 @@ export default function EmployeesPage() {
       toast.error(t('common_error'));
     } finally {
       setActionLoading(false);
+    }
+  };
+
+  // ── Delete an employee's profile. Their past sales/analytics are kept
+  //    (separate `sales` collection); their Firebase login is NOT removed by
+  //    client code — the confirm modal explains both so there's no surprise.
+  const handleDelete = async () => {
+    if (!deleteModal) return;
+    setDeleting(true);
+    try {
+      await deleteEmployee(deleteModal.id);
+      toast.success(t('common_success'));
+      setDeleteModal(null);
+      fetchData();
+    } catch {
+      toast.error(t('common_error'));
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -149,6 +170,13 @@ export default function EmployeesPage() {
             title={row.isBlocked ? t('employees_unblock') : t('employees_block')}
           >
             {row.isBlocked ? <Shield size={14} /> : <ShieldOff size={14} />}
+          </button>
+          <button
+            onClick={() => setDeleteModal(row)}
+            className="p-1.5 rounded-lg bg-red-500/10 text-error hover:bg-red-500/20 transition-all"
+            title={t('common_delete')}
+          >
+            <Trash2 size={14} />
           </button>
         </div>
       ),
@@ -272,6 +300,7 @@ export default function EmployeesPage() {
         </div>
       )}
 
+      {/* Block / Unblock Confirmation */}
       <ConfirmModal
         isOpen={!!blockModal}
         onClose={() => setBlockModal(null)}
@@ -280,6 +309,18 @@ export default function EmployeesPage() {
         message={`${blockModal?.isBlocked ? t('employees_unblock') : t('employees_block')} ${blockModal?.name}?`}
         danger={!blockModal?.isBlocked}
         loading={actionLoading}
+      />
+
+      {/* Delete Employee Confirmation — note: records kept, login not removed */}
+      <ConfirmModal
+        isOpen={!!deleteModal}
+        onClose={() => setDeleteModal(null)}
+        onConfirm={handleDelete}
+        title={t('common_delete_title')}
+        message={`${deleteModal?.name || ''} — ${t('common_delete_confirm')} ${t('employees_delete_note')}`}
+        danger
+        loading={deleting}
+        confirmText={t('common_delete')}
       />
     </Layout>
   );
