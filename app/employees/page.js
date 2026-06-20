@@ -16,7 +16,7 @@ import toast from 'react-hot-toast';
 
 export default function EmployeesPage() {
   const { shopId, isAdmin } = useAuth();
-  const { t } = useLanguage();
+  const { t, currentLang } = useLanguage();
   const { format } = useCurrency();
 
   const [employees, setEmployees] = useState([]);
@@ -230,10 +230,12 @@ export default function EmployeesPage() {
                 <label className="block text-sm font-medium text-text-main mb-1.5">{t('employees_role')}</label>
                 <select value={form.role} onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))}>
                   <option value="seller">{t('employees_role_seller')}</option>
-                  <option value="manager">{t('employees_role_manager')}</option>
+                  <option value="manager">{currentLang === 'uz' ? 'Menejer' : 'Manager'}</option>
                 </select>
                 <p className="text-[11px] text-subtext mt-1">
-                  {t('employees_role_hint')}
+                  {currentLang === 'uz'
+                    ? 'Menejer shu doʻkonni boshqaradi, lekin platforma adminiga kira olmaydi.'
+                    : 'Manager can run this shop but cannot access the platform admin.'}
                 </p>
               </div>
               <div>
