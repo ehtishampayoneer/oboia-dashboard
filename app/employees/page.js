@@ -27,7 +27,6 @@ export default function EmployeesPage() {
   const [perfData, setPerfData] = useState(null);
   const [blockModal, setBlockModal] = useState(null);
   const [actionLoading, setActionLoading] = useState(false);
-  // ── Delete (matches the shops page pattern) ──────────────────────────
   const [deleteModal, setDeleteModal] = useState(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -41,7 +40,6 @@ export default function EmployeesPage() {
       const effectiveShopId = isAdmin ? null : shopId;
       const [emps, branchSnap] = await Promise.all([
         getAllEmployees(effectiveShopId),
-        // For branches: if admin, get all branches; else filter by shopId
         getDocs(query(collection(db, 'branches'), ...(isAdmin ? [] : [where('shopId', '==', shopId)]))),
       ]);
       setEmployees(emps);
@@ -58,9 +56,16 @@ export default function EmployeesPage() {
       toast.error('Name, email and password are required');
       return;
     }
+    // Security: the effective shop the employee is created under. Admins must
+    // have a shop open; sellers use their own shop.
+    const targetShopId = isAdmin ? shopId : shopId;
+    if (!targetShopId) {
+      toast.error('Open a shop first before adding an employee');
+      return;
+    }
     setActionLoading(true);
     try {
-      await addEmployee(shopId, form);
+      await addEmployee(targetShopId, form);
       toast.success(t('employees_add_success'));
       setAddModal(false);
       setForm({ name: '', email: '', phone: '', password: '', role: 'seller', branchId: '' });
@@ -87,9 +92,6 @@ export default function EmployeesPage() {
     }
   };
 
-  // ── Delete an employee's profile. Their past sales/analytics are kept
-  //    (separate `sales` collection); their Firebase login is NOT removed by
-  //    client code — the confirm modal explains both so there's no surprise.
   const handleDelete = async () => {
     if (!deleteModal) return;
     setDeleting(true);
@@ -136,7 +138,7 @@ export default function EmployeesPage() {
       key: 'role', label: t('employees_role'), accessor: 'role',
       render: (v) => (
         <span className={`text-xs font-semibold capitalize px-2 py-1 rounded-full
-          ${v === 'admin' ? 'bg-primary/20 text-primary' : 'bg-surface text-subtext'}`}>
+          ${v === 'manager' ? 'bg-primary/20 text-primary' : 'bg-surface text-subtext'}`}>
           {v}
         </span>
       ),
@@ -201,7 +203,6 @@ export default function EmployeesPage() {
         }
       />
 
-      {/* Add Employee Modal */}
       {addModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
           <div className="w-full max-w-lg bg-card border border-white/10 rounded-2xl shadow-card animate-slide-up">
@@ -229,8 +230,11 @@ export default function EmployeesPage() {
                 <label className="block text-sm font-medium text-text-main mb-1.5">{t('employees_role')}</label>
                 <select value={form.role} onChange={(e) => setForm((f) => ({ ...f, role: e.target.value }))}>
                   <option value="seller">{t('employees_role_seller')}</option>
-                  <option value="admin">{t('employees_role_admin')}</option>
+                  <option value="manager">{t('employees_role_manager')}</option>
                 </select>
+                <p className="text-[11px] text-subtext mt-1">
+                  {t('employees_role_hint')}
+                </p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-text-main mb-1.5">{t('employees_branch')}</label>
@@ -258,7 +262,6 @@ export default function EmployeesPage() {
         </div>
       )}
 
-      {/* Performance Modal */}
       {perfModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
           <div className="w-full max-w-lg bg-card border border-white/10 rounded-2xl shadow-card animate-slide-up max-h-[80vh] flex flex-col">
@@ -300,7 +303,6 @@ export default function EmployeesPage() {
         </div>
       )}
 
-      {/* Block / Unblock Confirmation */}
       <ConfirmModal
         isOpen={!!blockModal}
         onClose={() => setBlockModal(null)}
@@ -311,7 +313,6 @@ export default function EmployeesPage() {
         loading={actionLoading}
       />
 
-      {/* Delete Employee Confirmation — note: records kept, login not removed */}
       <ConfirmModal
         isOpen={!!deleteModal}
         onClose={() => setDeleteModal(null)}
