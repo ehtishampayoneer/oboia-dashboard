@@ -4,8 +4,6 @@ export function middleware(request) {
   const { pathname } = request.nextUrl;
 
   // Public routes that don't need auth.
-  // /signup MUST be here — otherwise the middleware bounces logged-out
-  // visitors straight to /login and the seller signup page is unreachable.
   const publicPaths = ['/login', '/signup', '/_next', '/favicon.ico', '/api'];
   const isPublic = publicPaths.some((path) => pathname.startsWith(path));
   if (isPublic) {
@@ -20,12 +18,16 @@ export function middleware(request) {
     return NextResponse.redirect(loginUrl);
   }
 
-  // Admin-only routes
+  // ★ SECURITY FIX ★
+  // Platform-admin pages are for 'superadmin' ONLY. Previously 'admin' was
+  // also accepted, which combined with the employee bug let a shop-created
+  // "admin" reach the whole platform. Shop staff (seller/manager) are bounced
+  // back to their dashboard.
   const adminOnlyPaths = ['/shops', '/settings'];
   const isAdminOnly = adminOnlyPaths.some((path) => pathname.startsWith(path));
   if (isAdminOnly) {
     const role = request.cookies.get('wallar_role')?.value;
-    if (role !== 'admin' && role !== 'superadmin') {
+    if (role !== 'superadmin') {
       return NextResponse.redirect(new URL('/dashboard', request.url));
     }
   }
