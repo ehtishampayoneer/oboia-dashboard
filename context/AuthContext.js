@@ -60,7 +60,6 @@ export function AuthProvider({ children }) {
               setBaseShopId(userData.shopId || null);
               setBranchId(userData.branchId || null);
             } else {
-              // No user document – treat as unknown (e.g., customer or unregistered)
               setUserDoc(null);
               setUserRole(null);
               setBaseShopId(null);
@@ -81,7 +80,6 @@ export function AuthProvider({ children }) {
         setUserRole(null);
         setBaseShopId(null);
         setBranchId(null);
-        // Clear cookies
         if (typeof document !== 'undefined') {
           document.cookie = 'wallar_session=; path=/; max-age=0';
           document.cookie = 'wallar_role=; path=/; max-age=0';
@@ -92,7 +90,15 @@ export function AuthProvider({ children }) {
     return () => unsub();
   }, []);
 
-  const isAdmin = userRole === 'admin' || userRole === 'superadmin';
+  // ★ SECURITY FIX ★
+  // Platform admin = 'superadmin' ONLY. Previously 'admin' also counted, which
+  // let a shopkeeper create an employee with role 'admin' and gain full
+  // platform access. A shop's elevated staff now use the 'manager' role, which
+  // grants in-shop rights only and NEVER platform access.
+  const isAdmin = userRole === 'superadmin';
+
+  // In-shop elevated staff (can manage their own shop, but NOT the platform).
+  const isManager = userRole === 'manager';
 
   // The shopId the whole dashboard uses. For admins with a shop selected in
   // the header switcher, it's the selected shop; otherwise the user's own.
@@ -111,7 +117,8 @@ export function AuthProvider({ children }) {
         branchId,
         setBranchId,
         loading,
-        isAdmin,
+        isAdmin,      // superadmin only
+        isManager,    // shop manager (in-shop elevated)
       }}
     >
       {children}
