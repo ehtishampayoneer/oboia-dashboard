@@ -112,5 +112,5 @@ npm run dev
 - Refund returns stock + deducts craftsman bonus proportionally
 - Price changes saved to `priceHistory` with userId + timestamp
 - Blocked users cannot login (checked in `loginWithToken`)
-- Invalid shop token blocks login
+- Invalid shop token blocks login 
 - Sellers submitting wallpapers go to `pending` approval status; admins auto-approve
